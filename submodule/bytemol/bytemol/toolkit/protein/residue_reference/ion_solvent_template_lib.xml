@@ -1,0 +1,183 @@
+<?xml version="1.0" ?>
+<ForceField>
+  <Residues>
+    <Residue name="HOH">
+      <Atom name="O" element="O"/>
+      <Atom name="H1" element="H"/>
+      <Atom name="H2" element="H"/>
+      <Bond atomName1="O" atomName2="H1"/>
+      <Bond atomName1="O" atomName2="H2"/>
+    </Residue>
+    <Residue name="AL">
+      <Atom name="AL" element="Al"/>
+    </Residue>
+    <Residue name="Ag">
+      <Atom name="Ag" element="Ag"/>
+    </Residue>
+    <Residue name="BA">
+      <Atom name="BA" element="Ba"/>
+    </Residue>
+    <Residue name="BR">
+      <Atom name="BR" element="Br"/>
+    </Residue>
+    <Residue name="Be">
+      <Atom name="Be" element="Be"/>
+    </Residue>
+    <Residue name="CA">
+      <Atom name="CA" element="Ca"/>
+    </Residue>
+    <Residue name="CD">
+      <Atom name="CD" element="Cd"/>
+    </Residue>
+    <Residue name="CE">
+      <Atom name="CE" element="Ce"/>
+    </Residue>
+    <Residue name="CL">
+      <Atom name="CL" element="Cl"/>
+    </Residue>
+    <Residue name="CO">
+      <Atom name="CO" element="Co"/>
+    </Residue>
+    <Residue name="CR">
+      <Atom name="CR" element="Cr"/>
+    </Residue>
+    <Residue name="CS">
+      <Atom name="CS" element="Cs"/>
+    </Residue>
+    <Residue name="CU">
+      <Atom name="CU" element="Cu"/>
+    </Residue>
+    <Residue name="Ce">
+      <Atom name="Ce" element="Ce"/>
+    </Residue>
+    <Residue name="Cr">
+      <Atom name="Cr" element="Cr"/>
+    </Residue>
+    <Residue name="Dy">
+      <Atom name="Dy" element="Dy"/>
+    </Residue>
+    <Residue name="EU">
+      <Atom name="EU" element="Eu"/>
+    </Residue>
+    <Residue name="EU3">
+      <Atom name="EU3" element="Eu"/>
+    </Residue>
+    <Residue name="Er">
+      <Atom name="Er" element="Er"/>
+    </Residue>
+    <Residue name="F">
+      <Atom name="F" element="F"/>
+    </Residue>
+    <Residue name="FE">
+      <Atom name="FE" element="Fe"/>
+    </Residue>
+    <Residue name="FE2">
+      <Atom name="FE2" element="Fe"/>
+    </Residue>
+    <Residue name="GD3">
+      <Atom name="GD3" element="Gd"/>
+    </Residue>
+    <Residue name="HG">
+      <Atom name="HG" element="Hg"/>
+    </Residue>
+    <Residue name="Hf">
+      <Atom name="Hf" element="Hf"/>
+    </Residue>
+    <Residue name="IN">
+      <Atom name="IN" element="In"/>
+    </Residue>
+    <Residue name="IOD">
+      <Atom name="IOD" element="I"/>
+    </Residue>
+    <Residue name="K">
+      <Atom name="K" element="K"/>
+    </Residue>
+    <Residue name="LA">
+      <Atom name="LA" element="La"/>
+    </Residue>
+    <Residue name="LI">
+      <Atom name="LI" element="Li"/>
+    </Residue>
+    <Residue name="LU">
+      <Atom name="LU" element="Lu"/>
+    </Residue>
+    <Residue name="MG">
+      <Atom name="MG" element="Mg"/>
+    </Residue>
+    <Residue name="MN">
+      <Atom name="MN" element="Mn"/>
+    </Residue>
+    <Residue name="NA">
+      <Atom name="NA" element="Na"/>
+    </Residue>
+    <Residue name="NI">
+      <Atom name="NI" element="Ni"/>
+    </Residue>
+    <Residue name="Nd">
+      <Atom name="Nd" element="Nd"/>
+    </Residue>
+    <Residue name="PB">
+      <Atom name="PB" element="Pb"/>
+    </Residue>
+    <Residue name="PD">
+      <Atom name="PD" element="Pd"/>
+    </Residue>
+    <Residue name="PR">
+      <Atom name="PR" element="Pr"/>
+    </Residue>
+    <Residue name="PT">
+      <Atom name="PT" element="Pt"/>
+    </Residue>
+    <Residue name="Pu">
+      <Atom name="Pu" element="Pu"/>
+    </Residue>
+    <Residue name="RB">
+      <Atom name="RB" element="Rb"/>
+    </Residue>
+    <Residue name="Ra">
+      <Atom name="Ra" element="Ra"/>
+    </Residue>
+    <Residue name="SM">
+      <Atom name="SM" element="Sm"/>
+    </Residue>
+    <Residue name="SR">
+      <Atom name="SR" element="Sr"/>
+    </Residue>
+    <Residue name="Sm">
+      <Atom name="Sm" element="Sm"/>
+    </Residue>
+    <Residue name="Sn">
+      <Atom name="Sn" element="Sn"/>
+    </Residue>
+    <Residue name="TB">
+      <Atom name="TB" element="Tb"/>
+    </Residue>
+    <Residue name="Th">
+      <Atom name="Th" element="Th"/>
+    </Residue>
+    <Residue name="Tl">
+      <Atom name="Tl" element="Tl"/>
+    </Residue>
+    <Residue name="Tm">
+      <Atom name="Tm" element="Tm"/>
+    </Residue>
+    <Residue name="U4+">
+      <Atom name="U4+" element="U"/>
+    </Residue>
+    <Residue name="V2+">
+      <Atom name="V2+" element="V"/>
+    </Residue>
+    <Residue name="Y">
+      <Atom name="Y" element="Y"/>
+    </Residue>
+    <Residue name="YB2">
+      <Atom name="YB2" element="Yb"/>
+    </Residue>
+    <Residue name="ZN">
+      <Atom name="ZN" element="Zn"/>
+    </Residue>
+    <Residue name="Zr">
+      <Atom name="Zr" element="Zr"/>
+    </Residue>
+  </Residues>
+</ForceField>

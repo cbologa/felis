@@ -45,6 +45,18 @@ mkdir -p slurm_logs
 source "$CONDA_SH"
 conda activate "$FELIS_ENV"
 
+# OpenMPI 5+ enforces slot accounting and refuses to place N ranks on a node
+# with fewer "slots" -- but Felis deliberately packs np ranks onto ONE GPU via
+# MPS (intentional GPU oversubscription). This tells PRRTE (OMPI 5's runtime)
+# to allow it, equivalent to `mpirun --map-by :OVERSUBSCRIBE`.
+# REQUIRED on OpenMPI >= 5; harmless on 4.x.
+export PRTE_MCA_rmaps_default_mapping_policy=:oversubscribe
+# Pin per-rank threading so N MPI ranks sharing one GPU don't each spawn many
+# CPU threads and thrash. From the upstream run.sh.
+export OMP_NUM_THREADS=1
+export OPENMM_CPU_THREADS=1
+export RDMAV_FORK_SAFE=1
+
 # --- locate this task's work unit ---------------------------------------
 WORKDIR=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['workdir'])" "$MANIFEST")
 cd "$WORKDIR"

@@ -31,6 +31,13 @@ set -euo pipefail
 source "$CONDA_SH"
 conda activate "$FELIS_ENV"
 
+# Same OpenMPI-5 / threading env as the array tasks: the felis app imports the
+# MPI stack (mpiplus/mpi4py) at startup even for the CPU-only mbar+summarize.
+export PRTE_MCA_rmaps_default_mapping_policy=:oversubscribe
+export OMP_NUM_THREADS=1
+export OPENMM_CPU_THREADS=1
+export RDMAV_FORK_SAFE=1
+
 WORKDIR=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['workdir'])" "$MANIFEST")
 NA=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['na'])" "$MANIFEST")
 NB=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['nb'])" "$MANIFEST")

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -l
 # Finalize job: runs AFTER both arrays complete (afterok). Writes the .done
 # files the unmodified mbar stage needs, then runs mbar + summarize via Felis's
 # own stage code, then compares the resulting dG to the experimental value.
@@ -28,8 +28,14 @@ set -euo pipefail
 # Defaults to two levels up from this script (scripts/slurm/ -> repo root).
 : "${FELIS_REPO:=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 
+export PATH="$HOME/app:$HOME/bin:/usr/local/bin:/usr/bin:/bin:${PATH:-}"
+
+set +u
+export NVCC_PREPEND_FLAGS="${NVCC_PREPEND_FLAGS:-}"
+export NVCC_APPEND_FLAGS="${NVCC_APPEND_FLAGS:-}"
 source "$CONDA_SH"
 conda activate "$FELIS_ENV"
+set -u
 
 # Same OpenMPI-5 / threading env as the array tasks: the felis app imports the
 # MPI stack (mpiplus/mpi4py) at startup even for the CPU-only mbar+summarize.
@@ -80,9 +86,19 @@ PY
 LIG=$(python3 -c "import json,sys;from pathlib import Path;c=__import__('yaml').safe_load(open(sys.argv[1]));print(Path(c['sdffile']).stem)" "$ABFECFG")
 echo "[finalize] ligand=$LIG ; running mbar + summarize"
 
-# Run from the examples/abfe dir (where abfecfg paths resolve), but the tmpdir
-# logic copies outdir<->tmpdir. Simplest: call the app with stages override.
-python3 -m felis.app.abfe --abfecfg "$ABFECFG" --stages mbar summarize
+# CRITICAL: abfecfg.yaml's outdir is RELATIVE (e.g. "tyk2_example"), so the app
+# must run from the same directory the prep run used -- the dir CONTAINING the
+# abfecfg -- otherwise outdir resolves under WORKDIR and the path doubles to
+# .../tyk2_example/ejm_31/tyk2_example/ejm_31/, where no .nc files exist.
+# We verified files / wrote .done above using WORKDIR-relative paths; now cd to
+# the config's directory for the app call so outdir resolves as in prep.
+ABFECFG_DIR=$(cd "$(dirname "$ABFECFG")" && pwd)
+cd "$ABFECFG_DIR"
+echo "[finalize] running app from $ABFECFG_DIR (so relative outdir resolves)"
+"$CONDA_PREFIX/bin/python3" -m felis.app.abfe --abfecfg "$ABFECFG" --stages mbar summarize
+
+# return to WORKDIR for the result reporting below
+cd "$WORKDIR"
 
 # --- 4. Report dG and compare to experiment ------------------------------
 echo "[finalize] analysis outputs:"

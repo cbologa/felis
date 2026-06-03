@@ -105,6 +105,23 @@ def main():
 
     acfg = ABFEInputConfig.from_file(args.abfecfg)
 
+    # Fail loudly NOW if integer-typed config fields are unset -- otherwise they
+    # serialize as the string "None" into the repex `i:` tokens and crash each
+    # MPI rank with `int('None')` ~25s into the job, wasting the allocation.
+    _required_int = {
+        "md_checkpoint_interval": acfg.md_checkpoint_interval,
+        "md_sol_nsnapshots": acfg.md_sol_nsnapshots,
+        "md_pro_nsnapshots": acfg.md_pro_nsnapshots,
+    }
+    _missing = [k for k, v in _required_int.items() if v is None]
+    if _missing:
+        raise SystemExit(
+            f"ERROR: these config fields are None and would break the repex "
+            f"command: {_missing}. Set them in {args.abfecfg} "
+            f"(e.g. md_checkpoint_interval: 50, md_sol_nsnapshots: 400, "
+            f"md_pro_nsnapshots: 400)."
+        )
+
     sysA = build_sysA_lams(acfg)
     sysB = build_sysB_lams(acfg)
     groupsA = split_replica_exchange_jobs(args.na, list(range(len(sysA))))

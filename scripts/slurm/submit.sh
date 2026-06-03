@@ -37,9 +37,10 @@ NB="${NB:-8}"
 PARTITION="${PARTITION:-scavenger}"     # scavenger for production; debug to test
 TIME="${TIME:-04:00:00}"                # per-task wall; must exceed one group
 NP_VALUE="${NP_VALUE:-2}"               # MPI ranks/group over MPS (assert: np*group_windows<=48)
-GRES="${GRES:-gpu:1}"
 CPUS="${CPUS:-8}"
 MEM="${MEM:-64G}"
+# GPU request flag: easley wanted --gpus=1. If your cluster rejects it, change
+# the ARRAY_OPTS line below (and felis_array.sbatch's #SBATCH) to --gres=gpu:1.
 
 # Finalize job partition (CPU-only, short).
 FIN_PARTITION="${FIN_PARTITION:-general}"
@@ -57,8 +58,10 @@ GEN="${GEN:-$SCRIPT_DIR/gen_work_units.py}"
 mkdir -p slurm_logs
 
 echo "==> activating conda env '$FELIS_ENV' for manifest generation"
+set +u
 source "$CONDA_SH"
 conda activate "$FELIS_ENV"
+set -u
 
 echo "==> generating work-unit manifest"
 python3 "$GEN" \
@@ -79,7 +82,7 @@ if [ "$NA_ACT" -lt 1 ] || [ "$NB_ACT" -lt 1 ]; then
 fi
 
 COMMON_EXPORT="ALL,MANIFEST=$MANIFEST,NP_VALUE=$NP_VALUE,FELIS_ENV=$FELIS_ENV,CONDA_SH=$CONDA_SH"
-ARRAY_OPTS=(--partition="$PARTITION" --time="$TIME" --gres="$GRES"
+ARRAY_OPTS=(--partition="$PARTITION" --time="$TIME" --gpus=1
             --cpus-per-task="$CPUS" --mem="$MEM")
 
 echo "==> submitting sysA array (0-$((NA_ACT-1)))"

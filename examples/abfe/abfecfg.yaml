@@ -1,6 +1,30 @@
+# ABFE config for the tyk2 / ejm_31 example.
+#
+# These are FAST VALIDATION settings: coarse lambda spacing (e05/v18), ~2 ns per
+# window (400 snapshots x 2500 steps x 2 fs), single replica. They exercise the
+# whole pipeline end-to-end in ~15 min of GPU time but are NOT publication
+# accuracy. Validation result for ejm_31: dG_bind ~ -5.6 kcal/mol vs
+# experimental -9.54 (the ~4 kcal/mol gap is expected at this sampling level).
+#
+# For PRODUCTION accuracy, change to:
+#   elamrecipe: e29
+#   vlamrecipe: v45
+#   md_nsnapshots: 2000
+#   md_sol_nsnapshots: 2000
+#   md_pro_nsnapshots: 2000
+# and run 3 replicas into separate outdirs, averaging the dG. With the larger
+# ladders, raise the array group counts (e.g. NA=25 NB=30) and per-task wall
+# (TIME=08:00:00) so each ~3-window group fits -- see scripts/slurm/README.md.
 progro: input/protein_w_cofactors.gro
 protop: input/protein_w_cofactors.top
 sdffile: input/ejm_31.sdf
 itpfile: input/ejm_31.itp
 stages: ["all"]
 outdir: tyk2_example
+elamrecipe: e05
+vlamrecipe: v18
+reslamrecipe: r02
+md_nsnapshots: 400
+md_sol_nsnapshots: 400
+md_pro_nsnapshots: 400
+md_checkpoint_interval: 50

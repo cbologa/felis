@@ -144,9 +144,11 @@ def site_config(path):
             raise WorkflowError("Memory and walltime must be nonempty strings")
     if s["backend"] == "slurm":
         t = s.get("slurm")
-        keys(t, {"account", "partition", "analysis_partition", "gpu_args", "array_concurrency", "prep_concurrency", "extra_args"},
+        keys(t, {"account", "partition", "prep_partition", "analysis_partition", "gpu_args", "array_concurrency", "prep_concurrency", "extra_args"},
              {"partition", "analysis_partition", "gpu_args", "array_concurrency", "prep_concurrency"}, "slurm")
-        for k in ("partition", "analysis_partition"):
+        for k in ("partition", "analysis_partition", "prep_partition"):
+            if k == "prep_partition" and k not in t:
+                continue
             if not t[k] or "CHANGE_ME" in t[k]:
                 raise WorkflowError(f"Set slurm.{k} to a partition you can use")
         for k in ("array_concurrency", "prep_concurrency"):

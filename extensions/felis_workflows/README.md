@@ -57,6 +57,11 @@ No cluster access or partition entitlement is assumed.
 
 Set `repo`, environment command prefixes, account/partitions and walltimes.
 `bootstrap` may name a shell file that loads modules or initializes Conda.
+For Slurm, `slurm.partition` selects the A/B arrays, `slurm.analysis_partition`
+selects the CPU finalizer, and optional `slurm.prep_partition` selects the
+GPU system-preparation job (defaulting to the array partition). `prepare`,
+which builds the receptor and ligand on CPU, runs in the allocation from which
+you invoke it; the site profile does not request that allocation.
 Python runners are argv lists, for example `["/opt/envs/felis/bin/python"]` or
 `[conda, run, --no-capture-output, -n, felis, python]`. These names and paths occur
 only in site settings. The parent shell needs the Slurm client commands in PATH.

@@ -53,6 +53,32 @@ def test_science_identity_excludes_site(cycle, site, tmp_path):
     assert subprocess.run(["bash", "-n"], input=script, text=True).returncode == 0
 
 
+def test_stage_partitions_and_walltimes(cycle, site, tmp_path):
+    root, science = cycle
+    configured = read(site)
+    configured["slurm"]["partition"] = "scavenger"
+    configured["slurm"]["prep_partition"] = "interactive"
+    configured["slurm"]["analysis_partition"] = "general"
+    configured["resources"]["array"]["walltime"] = "06:00:00"
+    write(site, configured)
+    profile = site_config(site)
+    for kind, partition, walltime in [
+        ("prep", "interactive", "04:00:00"),
+        ("array", "scavenger", "06:00:00"),
+        ("finalize", "general", "04:00:00"),
+    ]:
+        task = next(t for t in graph(science) if t["kind"] == kind)
+        argv = submission_command(root, profile, tmp_path, task, tmp_path / "job.sh", [])
+        assert f"--partition={partition}" in argv
+        assert f"--time={walltime}" in argv
+    configured["slurm"].pop("prep_partition")
+    write(site, configured)
+    fallback = site_config(site)
+    task = next(t for t in graph(science) if t["kind"] == "prep")
+    argv = submission_command(root, fallback, tmp_path, task, tmp_path / "job.sh", [])
+    assert "--partition=scavenger" in argv
+
+
 def test_resume_only_missing_groups(cycle):
     _, science = cycle
     status = {c["key"]: {"prep": True, "finalize": True,

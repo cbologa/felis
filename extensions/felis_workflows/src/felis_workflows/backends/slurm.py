@@ -45,7 +45,8 @@ def submission_command(root, site, attempt, task, script, dependencies):
     slurm = site["slurm"]
     stage = "array" if task["kind"] == "array" else "analysis" if task["kind"] == "finalize" else "prep"
     resources = site["resources"][stage]
-    partition = slurm["analysis_partition"] if stage == "analysis" else slurm["partition"]
+    partition = {"prep": slurm.get("prep_partition", slurm["partition"]),
+                 "array": slurm["partition"], "analysis": slurm["analysis_partition"]}[stage]
     cmd = ["sbatch", "--parsable", f"--job-name=felis_{task['id']}", "--nodes=1", "--ntasks=1",
            f"--partition={partition}", f"--cpus-per-task={resources['cpus']}", f"--mem={resources['memory']}",
            f"--time={resources['walltime']}", f"--chdir={root}",

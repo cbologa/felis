@@ -1,0 +1,16 @@
+name: felis_sage_params
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.11
+  - openff-toolkit-base=0.18.0
+  - openff-interchange=0.4.11
+  - openff-nagl=0.5.5
+  - openff-nagl-models=2025.9.0
+  - openff-forcefields=2026.01.0
+  - rdkit
+  - openmm=8.4
+  - pytorch=*=cpu*
+  - pyyaml
+  - pytest

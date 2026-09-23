@@ -1,0 +1,20 @@
+schema_version: 1
+name: validation
+purpose: validation
+replicates: 1
+seed: 104729
+temperature_K: 298.15
+timestep_fs: 2
+steps_per_iteration: 2500
+solvent_ns: 1.0
+complex_ns: 1.0
+equilibration_ns: 3.0
+checkpoint_interval: 20
+electrostatics: e29
+vdw: v45
+restraints: r02
+groups_solvent: 25
+groups_complex: 30
+ionic_strength_M: 0.15
+restraint_constants: [2.0, 80.0, 80.0]
+reuse_solvent: true

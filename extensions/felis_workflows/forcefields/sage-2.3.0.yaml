@@ -1,0 +1,6 @@
+schema_version: 1
+name: sage-2.3.0-ashgc
+ligand: {backend: sage, version: '2.3.0', charge_model: ashgc}
+protein: ff14SB
+water: upstream-tip3p
+ions: upstream

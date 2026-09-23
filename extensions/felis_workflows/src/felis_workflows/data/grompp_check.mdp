@@ -1,0 +1,16 @@
+; Parse each complete, solvated FELIS topology; this is not a production MDP.
+integrator       = md
+dt               = 0.002
+nsteps           = 0
+cutoff-scheme    = Verlet
+coulombtype      = PME
+rcoulomb         = 1.0
+vdwtype          = Cut-off
+rvdw             = 1.0
+rlist            = 1.0
+constraints      = h-bonds
+constraint-algorithm = lincs
+pbc              = xyz
+tcoupl           = no
+pcoupl           = no
+gen-vel          = no

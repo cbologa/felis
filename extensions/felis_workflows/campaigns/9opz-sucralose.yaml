@@ -1,0 +1,17 @@
+# User-provided prepared construct and bound ligand are required; not included.
+# These chemistry settings belong to the original two-chain campaign only.
+schema_version: 1
+name: 9opz-sucralose
+receptor:
+  pdb: inputs/9OPZ_complete_ABFE_master.pdb
+  caps: ace_nme
+  expected_chains: 2
+  remove_hetatm: [RRY, RRJ]
+  histidine_overrides: {}
+  disulfides: {mode: detect, expected: 16, cutoff_angstrom: 2.5}
+ligands:
+  sucralose:
+    sdf: inputs/sucralose_bound.sdf
+    formal_charge: 0
+calculations:
+  - {id: sucralose_in_R, target: sucralose, partners: []}

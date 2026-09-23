@@ -1,0 +1,16 @@
+# Copy this template beside your inputs and set all chemistry choices deliberately.
+schema_version: 1
+name: new-protein
+receptor:
+  pdb: inputs/receptor.pdb
+  caps: charged
+  expected_chains: 1
+  remove_hetatm: []
+  histidine_overrides: {} # e.g. {'A:57': HID}; ambiguity fails preparation
+  disulfides: {mode: none, expected: 0}
+ligands:
+  ligand:
+    sdf: inputs/ligand_bound.sdf
+    formal_charge: 0
+calculations:
+  - {id: ligand_in_R, target: ligand, partners: []}

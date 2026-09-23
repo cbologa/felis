@@ -1,0 +1,2 @@
+# Preserve original Amber/ACPYPE tool outputs, including their padding.
+tests/data/gaff2_ejm31/LIG_* -whitespace

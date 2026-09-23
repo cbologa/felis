@@ -1,0 +1,25 @@
+# Starting values from the user's existing Easley scripts; review allocation limits.
+schema_version: 1
+name: easley
+backend: slurm
+repo: ${FELIS_REPO}
+bootstrap: null
+python:
+  simulation: [conda, run, --no-capture-output, -n, felis, python]
+  receptor: [conda, run, --no-capture-output, -n, felisff, python]
+  gaff2: [conda, run, --no-capture-output, -n, felisff, python]
+  sage: [conda, run, --no-capture-output, -n, felis_sage_params, python]
+mpi: {command: mpirun, ranks: 4, extra_args: [--oversubscribe]}
+mps: true
+resources:
+  prep: {cpus: 8, memory: 64G, walltime: '04:00:00'}
+  array: {cpus: 8, memory: 64G, walltime: '12:00:00'}
+  analysis: {cpus: 4, memory: 64G, walltime: '04:00:00'}
+slurm:
+  account: null
+  partition: scavenger
+  analysis_partition: general
+  gpu_args: [--gpus=1]
+  array_concurrency: 8
+  prep_concurrency: 1
+  extra_args: [--requeue]

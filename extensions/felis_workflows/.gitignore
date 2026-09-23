@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+!upstream.lock.json
+!docs/verification.json
+!legacy/*.zip
+!legacy/SHA256SUMS.json
+!tests/data/**/*.top
+!tests/data/**/*.itp
+campaigns/inputs/
+sites/personal/
+runs/

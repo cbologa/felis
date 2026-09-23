@@ -1,0 +1,61 @@
+{
+  "complete_9opz_pdb_preparation_executed": false,
+  "cpu_tests": {
+    "passed": 28,
+    "scope": "extension tests including real OpenMMTools checkpoint restart and real ACPYPE output regression"
+  },
+  "date": "2026-09-23",
+  "gpu_slurm_runs_performed": false,
+  "new_sage_adapter_executed": false,
+  "tyk2_cpu_prepare": {
+    "charge_balancing": {
+      "atom_indices_zero_based": [
+        13
+      ],
+      "method": "ACPYPE largest-absolute-charge balancing, independently reconstructed from Amber",
+      "original_net_charge_e": -0.002000994934777775,
+      "per_atom_delta_e": 0.002000994934777775,
+      "target_charge_e": 0
+    },
+    "input_sdf_sha256": "cd2519df92b1d901b2c0737c7a4336a789243eaaa174eb61ab19c01126f1d78d",
+    "parameter_versions": {
+      "acpype": "2023.10.27",
+      "numpy": "1.26.4",
+      "openmm": "8.6.1",
+      "parmed": "4.3.1",
+      "rdkit": "2026.3.6"
+    },
+    "passed": true,
+    "validation": {
+      "counts": {
+        "angles": 52,
+        "bonds": 33,
+        "exceptions": 149,
+        "particles": 32,
+        "torsions": 91
+      },
+      "energy_force_checks": [
+        {
+          "energy_difference_kJ_mol": 1.3276211348056677e-06,
+          "max_force_difference_kJ_mol_nm": 2.033273216284215e-05
+        },
+        {
+          "energy_difference_kJ_mol": 1.2642445881283493e-06,
+          "max_force_difference_kJ_mol_nm": 2.0520511583299594e-05
+        },
+        {
+          "energy_difference_kJ_mol": 1.3380243899518973e-06,
+          "max_force_difference_kJ_mol_nm": 2.0184799268463394e-05
+        }
+      ],
+      "hydrogen_constraints": 11,
+      "openmm_version": "8.6.1",
+      "particles": 32,
+      "passed": true
+    }
+  },
+  "upstream": {
+    "commit": "4d2556bfe09753ff63ddf549c3838a517f173b12",
+    "verified_paths": 4035
+  }
+}

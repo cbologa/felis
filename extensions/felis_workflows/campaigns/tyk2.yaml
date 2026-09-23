@@ -1,0 +1,11 @@
+schema_version: 1
+name: tyk2-ejm31
+receptor:
+  gro: ../../../pl_bfe_dataset/Schrodinger/jacs/tyk2/protein_ff14sb/protein_w_cofactors.gro
+  top: ../../../pl_bfe_dataset/Schrodinger/jacs/tyk2/protein_ff14sb/protein_w_cofactors.top
+ligands:
+  ejm31:
+    sdf: ../../../pl_bfe_dataset/Schrodinger/jacs/tyk2/ligands/ejm_31.sdf
+    formal_charge: 0
+calculations:
+  - {id: ejm31_in_R, target: ejm31, partners: []}

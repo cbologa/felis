@@ -1,0 +1,19 @@
+# Starting environment specification. Resolve and retain a platform-specific
+# explicit lock after qualifying CUDA, MPI and the upstream dependencies.
+name: felis
+channels: [conda-forge, nodefaults]
+dependencies:
+  - python=3.11
+  - numpy=1.26
+  - openmm=8.4
+  - openmmtools=0.26
+  - cuda-version=12.6
+  - openmpi
+  - mpi4py=4.1
+  - gromacs>=2022.5
+  - rdkit=2024.09
+  - parmed=4.3
+  - pymbar
+  - mdtraj
+  - pyyaml
+  - pip

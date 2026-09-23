@@ -1,0 +1,30 @@
+name: Portable FELIS workflows
+on:
+  pull_request:
+    paths: ['extensions/felis_workflows/**', '.github/workflows/portable-workflows.yml']
+  push:
+    branches: [portable-workflows]
+    paths: ['extensions/felis_workflows/**', '.github/workflows/portable-workflows.yml']
+permissions:
+  contents: read
+jobs:
+  cpu-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: >-
+          python -m pip install pytest pyyaml numpy==1.26.4 scipy
+          openmm==8.4.0 rdkit==2024.9.6 parmed==4.3.1 netCDF4 pymbar==4.0.3
+          'mdtraj<1.11' numba numexpr
+          'git+https://github.com/choderalab/mpiplus.git@v0.0.2'
+          'git+https://github.com/choderalab/openmmtools.git@0.26.0'
+      - run: python -m pip install --no-deps -e extensions/felis_workflows
+      - run: felis-workflow verify-upstream
+      - run: python -m pytest -q extensions/felis_workflows/tests -o log_cli=false

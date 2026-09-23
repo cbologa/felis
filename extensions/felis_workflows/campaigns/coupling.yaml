@@ -1,0 +1,20 @@
+# Replace inputs/chemistry with the intended receptor, orthosteric ligand and PAM.
+# All three structures MUST use the same coordinate frame.
+schema_version: 1
+name: ligand-pam-coupling
+receptor:
+  pdb: inputs/receptor.pdb
+  caps: charged
+  expected_chains: 1
+  remove_hetatm: []
+  histidine_overrides: {}
+  disulfides: {mode: none, expected: 0}
+ligands:
+  L: {sdf: inputs/orthosteric_bound.sdf, formal_charge: 0}
+  P: {sdf: inputs/pam_bound.sdf, formal_charge: 0}
+calculations:
+  - {id: L_in_R, target: L, partners: []}
+  - {id: P_in_R, target: P, partners: []}
+  - {id: L_in_RP, target: L, partners: [P], partner_site_max_distance_angstrom: 6.0}
+  - {id: P_in_RL, target: P, partners: [L], partner_site_max_distance_angstrom: 6.0}
+coupling: {L: L, P: P, L_in_R: L_in_R, P_in_R: P_in_R, L_in_RP: L_in_RP, P_in_RL: P_in_RL}

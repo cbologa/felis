@@ -1,0 +1,21 @@
+# Pipeline check only. Not suitable for physical conclusions.
+schema_version: 1
+name: smoke
+purpose: smoke
+replicates: 1
+seed: 15485863
+temperature_K: 298.15
+timestep_fs: 2
+steps_per_iteration: 2500
+solvent_ns: 0.1
+complex_ns: 0.1
+equilibration_ns: 3.0
+checkpoint_interval: 5
+electrostatics: e05
+vdw: v18
+restraints: r02
+groups_solvent: 6
+groups_complex: 8
+ionic_strength_M: 0.15
+restraint_constants: [2.0, 80.0, 80.0]
+reuse_solvent: true

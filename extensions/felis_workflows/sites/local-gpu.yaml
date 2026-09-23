@@ -1,0 +1,18 @@
+schema_version: 1
+name: local-gpu
+backend: local
+repo: ${FELIS_REPO}
+bootstrap: null
+python:
+  simulation: [conda, run, --no-capture-output, -n, felis, python]
+  receptor: [conda, run, --no-capture-output, -n, felisff, python]
+  gaff2: [conda, run, --no-capture-output, -n, felisff, python]
+  sage: [conda, run, --no-capture-output, -n, felis_sage_params, python]
+mpi: {command: mpirun, ranks: 4, extra_args: [--oversubscribe]}
+mps: true
+resources:
+  prep: {cpus: 8, memory: 64G, walltime: '04:00:00'}
+  array: {cpus: 8, memory: 64G, walltime: '24:00:00'}
+  analysis: {cpus: 4, memory: 64G, walltime: '04:00:00'}
+local:
+  gpus: ['0']

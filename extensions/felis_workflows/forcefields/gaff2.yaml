@@ -1,0 +1,6 @@
+schema_version: 1
+name: gaff2-am1bcc
+ligand: {backend: gaff2, version: '2', charge_model: am1-bcc}
+protein: ff14SB
+water: upstream-tip3p
+ions: upstream

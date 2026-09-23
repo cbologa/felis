@@ -2,8 +2,9 @@
 
 The extension is ready for code review and site qualification. Automated CPU
 checks do not establish GPU compatibility, receptor correctness or convergence.
-The final local run passed **28 tests**, including replay of recorded real GAFF2
-tool outputs. Machine-readable results are in [verification.json](verification.json).
+The initial verification, including replay of recorded real GAFF2 tool outputs,
+is recorded in [verification.json](verification.json). Rerun the checks after
+changing workflow profiles or code.
 
 ## Checks performed during implementation
 
@@ -63,10 +64,15 @@ in its own code; the numerical checks still run.
    adapter has not been rerun in a fresh OpenFF environment here; the original
    Sage workflow and its prior test reports remain in the supplied archive.
    Its native/export checks execute automatically during preparation.
-3. Run a smoke campaign on one allocated full GPU, then the full-ladder
-   validation profile. Check the saved assembled-system parameter/atom-mask
-   report, GROMACS logs, MPS isolation, memory use, native overlap/convergence
-   plots and checkpoint cadence.
+3. First run `smoke.yaml` (0.1 ns on 22/29 states, split into 6/8 groups)
+   for an end-to-end pipeline check on a previously successful ligand. Use
+   `validation.yaml` for 1 ns on that coarse ladder. Run
+   `full-ladder-validation.yaml` (1 ns on 73/80 states, 25/30 groups) when
+   checking the production lambda schedule. Check the saved assembled-system
+   parameter/atom-mask report, GROMACS logs, MPS isolation, memory use,
+   native overlap/convergence plots and checkpoint cadence. Finishing the
+   coarse calculation does not establish the accuracy or convergence of the
+   production protocol.
 4. Interrupt one test array task through the site's normal job controls. Once
    all trajectory writers have stopped, preview and run `resume`; verify that
    completed groups are retained and the interrupted group reaches its original
@@ -76,6 +82,23 @@ in its own code; the numerical checks still run.
    partner occupancy, receptor states, standard-state restraints and cycle
    closure. A fixed 6-Angstrom occupancy threshold is a template choice, not a
    universal binding-site definition.
+
+## Known-system acceptance on Easley
+
+For a sucralose/Sage run, record the frozen campaign, force-field and protocol
+from `science.json`; validate the receptor audit, ligand parameter validation,
+both assembled-leg atom masks and the `grompp_A.log`/`grompp_B.log` checks.
+Require `prep.ok.json`, every A and B trajectory at its stored iteration target,
+`finalized.json`, and an `analysis/report.json` with no missing calculation.
+Check the actual Slurm exit states and retry incomplete groups only after all
+previous trajectory writers stop. A Slurm completion state by itself does not
+establish that the physical calculation is complete.
+
+Compare the resulting diagnostics and free-energy estimate with the prior
+sucralose/Sage run only after checking receptor construct, ligand pose, force
+field and protocol differences. A coarse or short run can produce an end-to-end
+estimate while still having poor overlap or sampling. Keep that qualification
+separate from using a new receptor or ligand for scientific interpretation.
 
 The PDB-to-receptor path requires AmberTools `pdb4amber`/Reduce/LEaP and has not
 been executed against the user's complete 9OPZ construct here because those

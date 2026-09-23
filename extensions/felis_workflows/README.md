@@ -115,18 +115,29 @@ Select Sage by changing only the force-field argument to
 supplied Sage workflow's **AshGC** charge model; it does not substitute GAFF2
 charges. The bundled OFFXML and its declared model hash are checked.
 
-| Profile | Sampling per lambda state, each leg | Replicates | Role |
-| --- | --- | --- | --- |
-| `smoke.yaml` | 0.1 ns; coarse e05/v18 ladder | 1 | Pipeline check |
-| `validation.yaml` | 1 ns; full e29/v45 ladder | 1 | Topology, overlap and runtime validation |
-| `production.yaml` | 10 ns; full e29/v45 ladder | 3 | Starting production protocol |
+| Profile | Sampling per state, each leg | Lambda states A/B | GPU groups A/B | Replicates | Role |
+| --- | --- | --- | --- | --- | --- |
+| `smoke.yaml` | 0.1 ns; e05/v18 | 22/29 | 6/8 | 1 | Quick pipeline check |
+| `validation.yaml` | 1 ns; e05/v18 | 22/29 | 6/8 | 1 | Short end-to-end validation |
+| `full-ladder-validation.yaml` | 1 ns; e29/v45 | 73/80 | 25/30 | 1 | Check complete production ladder with short sampling |
+| `production.yaml` | 10 ns; e29/v45 | 73/80 | 25/30 | 3 | Starting production protocol |
 
 All use 3 ns of Boresch preparation, r02 restraints, 298.15 K and 2 fs steps.
 Durations are per state, not total GPU runtime; overlapping boundary states
-are simulated in adjacent groups. For longer production, copy the protocol and
+are simulated in adjacent groups. The 3 ns GPU preparation is still required
+for smoke and short validation; fewer ABFE states do not shorten it. The
+previous portable sucralose run planned with `validation.yaml` used the full
+73/80-state ladder; its frozen science settings do not change when this template
+changes. Plan a new run directory to choose a different protocol. A successful
+short validation checks the end-to-end path, not the production-ladder overlap
+or a converged affinity. For longer production, copy the protocol and
 increase `solvent_ns`/`complex_ns` (e.g. 50 ns), choose a new name/seed, and plan a
 new run. Set site walltimes from measured validation performance. A duration
 label does not establish convergence.
+
+`slurm.array_concurrency` limits **each** A or B array, not all GPUs in a
+campaign. For a single calculation, two arrays can use up to twice that number
+at once, subject to the scheduler's GPU quota; choose the site value deliberately.
 
 ## Prepare a new receptor and ligands
 

@@ -7,7 +7,7 @@ from felis_workflows.backends.common import graph, incomplete_graph, worker_scri
 from felis_workflows.backends.slurm import submission_command, ensure_idle
 from felis_workflows.common import WorkflowError, digest, read, write
 from felis_workflows.config import campaign_config, forcefield_config, protocol_config, site_config
-from felis_workflows.planning import abfe_config, copy_topology, load_run, units
+from felis_workflows.planning import abfe_config, copy_topology, lambdas, load_run, units
 
 
 def test_cycle_endpoints_sharing_and_native_tiling(cycle):
@@ -163,6 +163,23 @@ def test_profiles_load(extension, tmp_path):
     write(path, p)
     with pytest.raises(WorkflowError, match="298.15"):
         protocol_config(path)
+
+
+def test_short_and_full_ladder_profiles_are_distinct(extension, repo):
+    expected = {
+        "smoke": (0.1, (22, 6), (29, 8)),
+        "validation": (1.0, (22, 6), (29, 8)),
+        "full-ladder-validation": (1.0, (73, 25), (80, 30)),
+        "production": (10.0, (73, 25), (80, 30)),
+    }
+    for name, (duration, a, b) in expected.items():
+        protocol = protocol_config(extension / "protocols" / f"{name}.yaml")
+        ladder = lambdas(repo, protocol)
+        assert (protocol["solvent_ns"], protocol["complex_ns"]) == (duration, duration)
+        assert (len(ladder["A"]["lambdas"]), len(ladder["A"]["groups"])) == a
+        assert (len(ladder["B"]["lambdas"]), len(ladder["B"]["groups"])) == b
+        if name == "validation":
+            assert protocol["checkpoint_interval"] == 50
 
 
 def test_active_job_blocks_resume_before_trajectory_read(cycle, site, monkeypatch):

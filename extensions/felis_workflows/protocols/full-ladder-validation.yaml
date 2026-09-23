@@ -1,7 +1,7 @@
-# Short end-to-end validation with the historical coarse lambda recipe.
-# Use full-ladder-validation.yaml to exercise the production ladder.
+# Short sampling on the complete production lambda ladder.
+# This is the protocol used for the original portable sucralose validation run.
 schema_version: 1
-name: validation
+name: full-ladder-validation
 purpose: validation
 replicates: 1
 seed: 104729
@@ -11,12 +11,12 @@ steps_per_iteration: 2500
 solvent_ns: 1.0
 complex_ns: 1.0
 equilibration_ns: 3.0
-checkpoint_interval: 50
-electrostatics: e05
-vdw: v18
+checkpoint_interval: 20
+electrostatics: e29
+vdw: v45
 restraints: r02
-groups_solvent: 6
-groups_complex: 8
+groups_solvent: 25
+groups_complex: 30
 ionic_strength_M: 0.15
 restraint_constants: [2.0, 80.0, 80.0]
 reuse_solvent: true

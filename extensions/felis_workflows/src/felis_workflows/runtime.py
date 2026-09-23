@@ -119,8 +119,16 @@ def allocation(site):
         yield
     finally:
         if started:
-            subprocess.run(["nvidia-cuda-mps-control"], input="quit\n", text=True, check=False,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                subprocess.run(["nvidia-cuda-mps-control"], input="quit\n", text=True,
+                               check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                               timeout=60)
+            except subprocess.TimeoutExpired:
+                # The control client can hang after all GPU stages have returned.
+                # subprocess.run kills that client on timeout; let the worker
+                # finish its checks and release the Slurm allocation.
+                print("CUDA MPS shutdown exceeded 60 seconds; continuing cleanup", file=sys.stderr,
+                      flush=True)
         if directory:
             shutil.rmtree(directory)
         for name, value in original.items():

@@ -3,7 +3,7 @@ import os
 import subprocess
 import pytest
 
-from felis_workflows.common import WorkflowError
+from felis_workflows.common import WorkflowError, write
 from felis_workflows.integrity import verify_upstream
 from felis_workflows.preparation.receptor import clean_source, disulfide_pairs
 from felis_workflows.preparation.caps import pdb_new
@@ -12,6 +12,16 @@ from felis_workflows.preparation.caps import pdb_new
 def test_real_upstream_integrity(repo):
     result = verify_upstream(repo)
     assert result["verified_paths"] > 100
+    assert result["approved_patches"] == [
+        "felis/configs/_config_tools.py", "felis/configs/global_keys.py",
+        "felis/protocols/abfe/config_types.py", "felis/utils/omm/omm_system.py",
+    ]
+
+
+def _fixture_manifest(repo, base, patches):
+    tree = subprocess.check_output(["git", "-C", str(repo), "rev-parse", f"{base}^{{tree}}"], text=True).strip()
+    write(repo / "extensions/felis_workflows/upstream.lock.json",
+          {"commit": base, "tree": tree, "approved_patches": patches})
 
 
 def test_upstream_file_mode_symlink_and_index_guards(tmp_path, monkeypatch):
@@ -24,7 +34,9 @@ def test_upstream_file_mode_symlink_and_index_guards(tmp_path, monkeypatch):
     (tmp_path / "alias").symlink_to("engine.py")
     git("add", ".")
     git("-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "fixture")
-    monkeypatch.setattr(integrity, "UPSTREAM_COMMIT", git("rev-parse", "HEAD"))
+    base = git("rev-parse", "HEAD")
+    monkeypatch.setattr(integrity, "UPSTREAM_COMMIT", base)
+    _fixture_manifest(tmp_path, base, [])
     (tmp_path / "extension.py").write_text("allowed")
     assert verify_upstream(tmp_path)["verified_paths"] == 2
     path.write_text("changed\n")
@@ -40,6 +52,66 @@ def test_upstream_file_mode_symlink_and_index_guards(tmp_path, monkeypatch):
     (tmp_path / "alias").unlink()
     (tmp_path / "alias").write_text("engine.py")
     with pytest.raises(WorkflowError, match="symlink replaced"):
+        verify_upstream(tmp_path)
+
+
+def test_approved_patch_must_match_worktree_and_index(tmp_path, monkeypatch):
+    import felis_workflows.integrity as integrity
+    def git(*args):
+        return subprocess.check_output(["git", "-C", str(tmp_path), *args], text=True).strip()
+    git("init")
+    approved = tmp_path / "core.py"
+    other = tmp_path / "other.py"
+    approved.write_text("base\n")
+    other.write_text("unchanged\n")
+    git("add", ".")
+    git("-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "base")
+    base = git("rev-parse", "HEAD")
+    monkeypatch.setattr(integrity, "UPSTREAM_COMMIT", base)
+    base_blob = git("rev-parse", f"{base}:core.py")
+    approved.write_text("approved\n")
+    patched_blob = git("hash-object", "core.py")
+    _fixture_manifest(tmp_path, base, [{"path": "core.py", "base_blob": base_blob,
+                                       "patched_blob": patched_blob, "rationale": "Regression fix"}])
+    assert verify_upstream(tmp_path)["approved_patches"] == ["core.py"]
+    git("add", "core.py")
+    assert verify_upstream(tmp_path)["approved_patches"] == ["core.py"]
+    git("update-index", "--chmod=+x", "core.py")
+    with pytest.raises(WorkflowError, match="Staged upstream"):
+        verify_upstream(tmp_path)
+    git("update-index", "--chmod=-x", "core.py")
+    assert verify_upstream(tmp_path)["approved_patches"] == ["core.py"]
+    git("rm", "--cached", "core.py")
+    with pytest.raises(WorkflowError, match="Staged upstream"):
+        verify_upstream(tmp_path)
+    git("add", "core.py")
+    assert verify_upstream(tmp_path)["approved_patches"] == ["core.py"]
+    approved.write_text("unreviewed\n")
+    with pytest.raises(WorkflowError, match="content changed"):
+        verify_upstream(tmp_path)
+    git("add", "core.py")
+    approved.write_text("approved\n")
+    with pytest.raises(WorkflowError, match="Staged upstream"):
+        verify_upstream(tmp_path)
+    git("add", "core.py")
+    other.write_text("unreviewed\n")
+    with pytest.raises(WorkflowError, match="content changed"):
+        verify_upstream(tmp_path)
+
+
+def test_patch_manifest_rejects_wrong_base_blob(tmp_path, monkeypatch):
+    import felis_workflows.integrity as integrity
+    subprocess.run(["git", "init", str(tmp_path)], check=True, stdout=subprocess.DEVNULL)
+    (tmp_path / "core.py").write_text("base\n")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "-c", "user.name=Test", "-c",
+                    "user.email=test@example.invalid", "commit", "-m", "base"],
+                   check=True, stdout=subprocess.DEVNULL)
+    base = subprocess.check_output(["git", "-C", str(tmp_path), "rev-parse", "HEAD"], text=True).strip()
+    monkeypatch.setattr(integrity, "UPSTREAM_COMMIT", base)
+    _fixture_manifest(tmp_path, base, [{"path": "core.py", "base_blob": "0" * 40,
+                                       "patched_blob": "1" * 40, "rationale": "Wrong base"}])
+    with pytest.raises(WorkflowError, match="Incorrect upstream base blob"):
         verify_upstream(tmp_path)
 
 

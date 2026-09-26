@@ -14,11 +14,50 @@ Notes:
 
 import json
 import logging
+import math
+from decimal import Decimal, InvalidOperation
 from typing import Any, TextIO
 
 import yaml
 
 logger = logging.getLogger(__name__)
+
+
+def finite_float(value: Any, name: str, *, positive: bool = False) -> float:
+    """Normalize a numeric config value, including YAML's string form of 1e-8."""
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        raise ValueError(f"{name} must be a finite number")
+    try:
+        result = float(value)
+    except (ValueError, OverflowError) as error:
+        raise ValueError(f"{name} must be a finite number") from error
+    if not math.isfinite(result) or (positive and result <= 0):
+        qualifier = "positive finite" if positive else "finite"
+        raise ValueError(f"{name} must be a {qualifier} number")
+    return result
+
+
+def finite_int(value: Any, name: str) -> int:
+    """Accept exact integral numbers without truncation or boolean coercion."""
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be an integer")
+    if isinstance(value, int):
+        return value
+    if not isinstance(value, (float, str)):
+        raise ValueError(f"{name} must be an integer")
+    try:
+        number = Decimal(value.strip() if isinstance(value, str) else str(value))
+    except InvalidOperation as error:
+        raise ValueError(f"{name} must be an integer") from error
+    if not number.is_finite() or number != number.to_integral_value():
+        raise ValueError(f"{name} must be a finite integer")
+    return int(number)
+
+
+def numeric_list(value: Any, name: str, converter, *, lengths=None) -> list:
+    if not isinstance(value, (list, tuple)) or (lengths is not None and len(value) not in lengths):
+        raise ValueError(f"{name} must be a numeric list of the expected length")
+    return [converter(item, f"{name}[{index}]") for index, item in enumerate(value)]
 
 
 def load_config(file_handle: TextIO) -> Any:

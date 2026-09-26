@@ -8,8 +8,11 @@ changing workflow profiles or code.
 
 ## Checks performed during implementation
 
-* All 4,035 upstream-owned paths matched the pinned revision, including modes,
-  symlinks and staged content. The retained legacy Slurm files are fork additions.
+* At the portable baseline, all 4,035 upstream-owned paths matched the pinned
+  revision. PR 1 retains that base and approves four exact core blobs for numeric
+  configuration correctness. `verify-upstream` still rejects changes to every
+  other upstream path and any unapproved worktree or staged core blob. The
+  retained legacy Slurm files are fork additions.
 * Unit/integration tests cover four-ABFE endpoint definitions; native 73/80-state
   lambda ladders and overlapping group boundaries; distinct replicate seed
   assignments; two shared solvent legs per replicate; dependency construction;

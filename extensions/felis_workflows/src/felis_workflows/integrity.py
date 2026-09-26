@@ -2,20 +2,67 @@
 from pathlib import Path
 import hashlib
 import os
+import re
 import stat
 import subprocess
 
 from . import UPSTREAM_COMMIT
-from .common import WorkflowError
+from .common import WorkflowError, read
 
 
 def git(repo, *args):
     return subprocess.check_output(["git", "-C", str(repo), *args])
 
 
+def index_entry(repo, path):
+    """Return the complete index entry for a literal upstream path, if unique."""
+    output = git(repo, "--literal-pathspecs", "ls-files", "--stage", "-z", "--", path)
+    records = [record for record in output.split(b"\0") if record]
+    if len(records) != 1:
+        return None
+    try:
+        header, recorded_path = records[0].split(b"\t", 1)
+        mode, blob, stage = header.decode("ascii").split()
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if recorded_path != os.fsencode(path):
+        return None
+    return mode, blob, stage
+
+
+def approved_patches(repo, base_entries):
+    """Validate the reviewed patch manifest against the pinned base tree."""
+    manifest = read(repo / "extensions/felis_workflows/upstream.lock.json")
+    tree = git(repo, "rev-parse", f"{UPSTREAM_COMMIT}^{{tree}}").decode().strip()
+    if manifest.get("commit") != UPSTREAM_COMMIT or manifest.get("tree") != tree:
+        raise WorkflowError("Approved patch manifest does not match the pinned upstream base")
+    patches = {}
+    for patch in manifest.get("approved_patches", []):
+        if not isinstance(patch, dict) or set(patch) != {"path", "base_blob", "patched_blob", "rationale"}:
+            raise WorkflowError("Approved patch entries need path, base_blob, patched_blob and rationale")
+        path = patch["path"]
+        if not isinstance(path, str) or path not in base_entries or path in patches:
+            raise WorkflowError(f"Unknown or duplicate approved upstream path: {path!r}")
+        base_mode, base_kind, base_blob = base_entries[path]
+        if base_kind != "blob" or base_mode not in {"100644", "100755"} or patch["base_blob"] != base_blob:
+            raise WorkflowError(f"Incorrect upstream base blob for {path}")
+        patched = patch["patched_blob"]
+        if not isinstance(patched, str) or not re.fullmatch(r"[0-9a-f]{40}", patched) or patched == base_blob:
+            raise WorkflowError(f"Invalid approved patched blob for {path}")
+        if not isinstance(patch["rationale"], str) or not patch["rationale"].strip():
+            raise WorkflowError(f"Missing patch rationale for {path}")
+        patches[path] = patched
+    return patches
+
+
 def verify_upstream(repo):
     repo = Path(repo).resolve()
     entries = git(repo, "ls-tree", "-rz", UPSTREAM_COMMIT).split(b"\0")
+    base_entries = {}
+    for entry in filter(None, entries):
+        header, name = entry.split(b"\t", 1)
+        base_entries[os.fsdecode(name)] = tuple(header.decode().split())
+    patches = approved_patches(repo, base_entries)
     failures, count = [], 0
     for entry in filter(None, entries):
         header, name = entry.split(b"\t", 1)
@@ -47,7 +94,7 @@ def verify_upstream(repo):
             else:
                 raise WorkflowError(f"Unsupported upstream tree entry {kind}")
             actual = hashlib.sha1(b"blob " + str(len(content)).encode() + b"\0" + content).hexdigest()
-            if actual != expected:
+            if actual != patches.get(relative, expected):
                 raise WorkflowError("content changed")
         except (OSError, ValueError) as error:
             failures.append(f"{relative}: {error}")
@@ -55,8 +102,14 @@ def verify_upstream(repo):
         raise WorkflowError("Upstream integrity failed:\n" + "\n".join(failures[:30]))
     # Also catch staged changes masked by a restored working copy.
     staged = git(repo, "diff", "--cached", "--name-only", "-z", UPSTREAM_COMMIT).split(b"\0")
-    upstream_names = {entry.split(b"\t", 1)[1] for entry in filter(None, entries)}
+    upstream_names = {os.fsencode(name) for name in base_entries}
     modified = upstream_names.intersection(staged)
-    if modified:
-        raise WorkflowError(f"Staged upstream modifications: {sorted(os.fsdecode(x) for x in modified)}")
-    return {"commit": UPSTREAM_COMMIT, "verified_paths": count}
+    unexpected = {os.fsdecode(name) for name in modified if os.fsdecode(name) not in patches}
+    for name in modified:
+        path = os.fsdecode(name)
+        if path in patches:
+            if index_entry(repo, path) != (base_entries[path][0], patches[path], "0"):
+                unexpected.add(path)
+    if unexpected:
+        raise WorkflowError(f"Staged upstream modifications: {sorted(unexpected)}")
+    return {"commit": UPSTREAM_COMMIT, "verified_paths": count, "approved_patches": sorted(patches)}

@@ -13,6 +13,7 @@ import numpy as np
 from felis.configs import GlobalKeys
 from felis.configs import load_config
 from felis.configs import MinimizeRelaxOption
+from felis.configs._config_tools import finite_float, finite_int, numeric_list
 
 
 def _int_or_str(value):
@@ -20,6 +21,41 @@ def _int_or_str(value):
         return int(value)
     except ValueError:
         return value
+
+
+_FLOAT_FIELDS = {"pro_ionic_strength"}
+_INT_FIELDS = {
+    "eq_pose", "md_checkpoint_interval", "md_sol_nsnapshots", "md_pro_nsnapshots",
+    "md_nsnapshots", "md_eq_nsnapshots",
+}
+_FLOAT_LIST_FIELDS = {
+    "supplementary_elec_lambda_list", "supplementary_vdw_lambda_list",
+    "supplementary_restraint_lambda_list", "k_r_a_dih",
+}
+_OPTION_FIELDS = {"md_sol_em_version", "md_pro_em_version"}
+
+
+def _typed_numeric_input(data: dict) -> dict:
+    """Normalize only ABFE's known numeric inputs; preserve all other fields."""
+    result = dict(data)
+    for name, value in data.items():
+        if value is None:
+            if name in _FLOAT_FIELDS | {"eq_pose", "md_nsnapshots", "md_eq_nsnapshots"} | _OPTION_FIELDS:
+                raise ValueError(f"{name} must not be null")
+            continue
+        if name in _FLOAT_FIELDS:
+            result[name] = finite_float(value, name)
+        elif name in _INT_FIELDS:
+            result[name] = finite_int(value, name)
+        elif name in _FLOAT_LIST_FIELDS:
+            result[name] = numeric_list(value, name, finite_float,
+                                        lengths={3} if name == "k_r_a_dih" else None)
+        elif name in _OPTION_FIELDS:
+            if isinstance(value, bool):
+                raise ValueError(f"{name} must be a minimize option, not a boolean")
+            if isinstance(value, (int, float)) or (isinstance(value, str) and value.strip().lstrip("+-").isdigit()):
+                result[name] = finite_int(value, name)
+    return result
 
 
 class ABStage(Enum):
@@ -129,12 +165,15 @@ class ABFEInputConfig:
     # https://github.com/choderalab/yank/issues/1256
 
     def update_by_dict(self, d: dict) -> None:
+        d = _typed_numeric_input(d)
         for f in fields(ABFEInputConfig):
             if f.name in d:
                 if d[f.name] is not None:
                     setattr(self, f.name, d[f.name])
 
     def check(self):
+
+        self.update_by_dict({f.name: getattr(self, f.name) for f in fields(ABFEInputConfig)})
 
         def _make_abs(x):
             if x is None:
@@ -202,7 +241,7 @@ class ABFEInputConfig:
                 if k not in known_fields:
                     raise ValueError(f"Unknown key {k} in config file {path}")
             d = {k: v for k, v in d.items() if k in known_fields}
-            return cls(**d)
+            return cls(**_typed_numeric_input(d))
 
     @classmethod
     def get_list_of_field_type_default_help_tuples(cls) -> list:

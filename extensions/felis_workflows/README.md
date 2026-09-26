@@ -1,8 +1,11 @@
 # Portable FELIS workflows
 
 This extension separates molecular inputs, force fields, sampling protocols and
-execution sites. It calls the pinned FELIS engine without editing its files.
-The upstream revision is `4d2556bfe09753ff63ddf549c3838a517f173b12`.
+execution sites. The FELIS base revision is
+`4d2556bfe09753ff63ddf549c3838a517f173b12`. Four narrowly reviewed core
+files differ from that base; their base and approved Git blob IDs and rationales
+are recorded in `upstream.lock.json`. `verify-upstream` checks the exact approved
+blobs and requires every other upstream-owned path to match the base revision.
 
 | Location | Responsibility |
 | --- | --- |
@@ -41,6 +44,11 @@ conda run -n felis python -m pip install -e extensions/felis_workflows
 conda activate felis
 felis-workflow verify-upstream
 ```
+
+Do not edit the pinned core files without updating and reviewing the approved
+patch manifest. An edited worktree or staged blob outside the recorded hashes
+fails verification. The numeric configuration patch validates explicitly listed
+fields at loading; the integrator also retains a defensive float conversion.
 
 The CLI itself needs only Python and PyYAML. Planning and dry runs do not require
 GPUs or the molecular toolchains. Worker scripts put this checkout first on

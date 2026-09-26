@@ -463,7 +463,7 @@ def get_integrator(gk: GlobalKeys) -> Integrator:
         targetT_K = itg.targetT_K
         friction_1_ps = itg.friction_1_ps
         oitg: Integrator = LangevinMiddleIntegrator(targetT_K, friction_1_ps, dt_ps)
-        oitg.setConstraintTolerance(itg.constraint_tol)
+        oitg.setConstraintTolerance(float(itg.constraint_tol))
         oitg.setRandomNumberSeed(randomseed)
         return oitg
     elif IntegratorNameOption(name) == IntegratorNameOption.BrownianIntegrator:

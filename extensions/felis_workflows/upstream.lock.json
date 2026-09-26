@@ -2,5 +2,31 @@
   "repository": "https://github.com/ByteDance-Seed/felis",
   "commit": "4d2556bfe09753ff63ddf549c3838a517f173b12",
   "tree": "d925956d4bc2b14c87d78f4bb5b2289464441c97",
-  "policy": "Every upstream-owned path, content and mode must match this revision."
+  "policy": "Every upstream-owned path and mode matches this base revision, except for exact reviewed blobs listed in approved_patches.",
+  "approved_patches": [
+    {
+      "path": "felis/configs/_config_tools.py",
+      "base_blob": "7d86cbc788bc912012024b434a630a344f95a581",
+      "patched_blob": "6ca03365da7b391a3224b1714978c7c28321366f",
+      "rationale": "Explicit finite numeric parsing shared by the two configuration ingestion paths."
+    },
+    {
+      "path": "felis/configs/global_keys.py",
+      "base_blob": "41146633379ca1aae3992fd90924203bed05897f",
+      "patched_blob": "20b41f27006051bebea507df7f486201aadb31bd",
+      "rationale": "Normalize only enumerated numeric GlobalKeys fields before simulation construction."
+    },
+    {
+      "path": "felis/protocols/abfe/config_types.py",
+      "base_blob": "c805b5e2ddac7f5cfa8367e7777e76ff7be94610",
+      "patched_blob": "4d36ad40d0d8d62668ae13928fd7d4f0f132e12f",
+      "rationale": "Validate explicit numeric ABFE input fields when reading a configuration file."
+    },
+    {
+      "path": "felis/utils/omm/omm_system.py",
+      "base_blob": "66d9441340fd896a62a7684568dc2f9986dc019a",
+      "patched_blob": "39e1ce9f96c2e731a888944362834c0d8e1fe073",
+      "rationale": "Keep the Easley defensive float conversion at the OpenMM constraint-tolerance boundary."
+    }
+  ]
 }

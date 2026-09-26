@@ -25,7 +25,7 @@ from pathlib import Path
 import random
 from typing import Any, Type
 
-from ._config_tools import load_config
+from ._config_tools import finite_float, finite_int, load_config, numeric_list
 from .global_keys_option_enums import IntegratorNameOption
 from .global_keys_option_enums import MinimizeRelaxOption
 
@@ -232,6 +232,62 @@ class GKOpenMM:
         assert self.params_ecosystem in ("gromacs",)
 
 
+_NUMERIC_FIELDS = {
+    GKIntegrator: {
+        "float": {"dt_ps", "constraint_tol", "friction_1_ps", "targetT_K", "targetP_bar"},
+        "int": {"nstep_per_snapshot", "nsnapshots", "npt", "npt_mc_freq", "randomseed"},
+    },
+    GKPosres: {"float": {"k_kcal", "tol_angstrom"}, "int_list": {"atoms"}},
+    GKBoresch: {
+        "int_list": {"ligatoms", "proatoms"},
+        "float_list": {"r_theta_phi", "alpha_beta_gamma", "k_r_a_dih_kcal"},
+    },
+    GKAB: {
+        "float": {"vlam", "elam", "reslam"},
+        "int": {"ilam"},
+        "int_list": {"ligatoms"},
+        "lambda_list": {"lam_list"},
+    },
+    GKOpenMM: {"int": {"checkpoint_interval"}},
+}
+_NULLABLE_NUMERIC_FIELDS = {
+    GKPosres: {"atoms"},
+    GKBoresch: {"ligatoms", "proatoms", "r_theta_phi", "alpha_beta_gamma", "k_r_a_dih_kcal"},
+    GKAB: {"ligatoms", "lam_list"},
+}
+
+
+def _typed_numeric_value(cls: Type[Any], name: str, value: Any) -> Any:
+    """Only coerce the explicitly listed numeric configuration fields."""
+    kinds = _NUMERIC_FIELDS.get(cls, {})
+    if value is None:
+        if name in _NULLABLE_NUMERIC_FIELDS.get(cls, ()):
+            return None
+        if any(name in names for names in kinds.values()):
+            raise ValueError(f"{cls.__name__}.{name} must not be null")
+        return None
+    label = f"{cls.__name__}.{name}"
+    if name in kinds.get("float", ()):
+        return finite_float(value, label, positive=name == "constraint_tol")
+    if name in kinds.get("int", ()):
+        return finite_int(value, label)
+    if name in kinds.get("int_list", ()):
+        return numeric_list(value, label, finite_int)
+    if name in kinds.get("float_list", ()):
+        return numeric_list(value, label, finite_float)
+    if name in kinds.get("lambda_list", ()):
+        if not isinstance(value, (list, tuple)):
+            raise ValueError(f"{label} must be a list of lambda states")
+        return [numeric_list(state, f"{label}[{index}]", finite_float, lengths={2, 3})
+                for index, state in enumerate(value)]
+    # MinimizeRelaxOption also accepts names and aliases such as 'fire2'.
+    if cls is GKIntegrator and name == "minimize":
+        if isinstance(value, bool):
+            raise ValueError(f"{label} must be a minimize option, not a boolean")
+        return value if isinstance(value, str) and not value.strip().lstrip("+-").isdigit() else finite_int(value, label)
+    return value
+
+
 def _update_by_dict(cls: Type[Any], obj: Any, data: dict) -> None:
     """Update a dataclass object from a dictionary.
 
@@ -251,7 +307,7 @@ def _update_by_dict(cls: Type[Any], obj: Any, data: dict) -> None:
         klow = k.lower()
         assert klow in _validfields, f"{k} is not a valid field name of {cls}"
         kori = valid_fields[klow]
-        setattr(obj, kori, v)
+        setattr(obj, kori, _typed_numeric_value(cls, kori, v))
 
 
 @dataclass
@@ -290,6 +346,9 @@ class GlobalKeys:
         """Validate all configuration sections by calling their __post_init__ methods."""
         for f in fields(GlobalKeys):
             obj = getattr(self, f.name)
+            for item in fields(type(obj)):
+                value = getattr(obj, item.name)
+                setattr(obj, item.name, _typed_numeric_value(type(obj), item.name, value))
             if hasattr(obj, "__post_init__"):
                 obj.__post_init__()
 

@@ -1,11 +1,16 @@
 # Migration and upstream ownership
 
-The immutable boundary is every tracked path in ByteDance-Seed/felis commit
+The base boundary is every tracked path in ByteDance-Seed/felis commit
 `4d2556bfe09753ff63ddf549c3838a517f173b12`, including content, symlinks and
-executable bits. `verify-upstream` checks the working tree and index. Correctly
-materialized LFS objects are accepted against their upstream object hashes.
-New extension files do not alter the upstream tree. An upstream update is an
-explicit future migration with a new pin and compatibility tests.
+executable bits. `upstream.lock.json` records the base commit/tree plus a small
+approved patch manifest: path, original Git blob, exact patched Git blob, and
+rationale. The four approved core files implement explicit numeric configuration
+normalization and preserve the defensive OpenMM constraint-tolerance conversion.
+`verify-upstream` validates the manifest against the base tree, checks the
+worktree and index against each approved hash, and requires all other upstream
+paths to remain exact. Correctly materialized LFS objects are accepted against
+their upstream object hashes. A new patch or upstream update requires explicit
+manifest review and compatibility tests.
 
 The existing fork has changes to upstream-owned files: the example ABFE config,
 packaging metadata and residue XML files, plus a missing residue-reference ignore

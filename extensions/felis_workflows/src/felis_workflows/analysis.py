@@ -5,7 +5,8 @@ import math
 from pathlib import Path
 import statistics
 
-from .common import WorkflowError, digest, keys, read, verify_hashes, write
+from .artifacts import validate_final
+from .common import WorkflowError, digest, keys, read, write
 from .planning import load_run
 
 
@@ -61,10 +62,7 @@ def analyze(root, corrections=None):
         if not marker.exists():
             missing.append(calc["key"])
             continue
-        ready = read(marker)
-        if ready["science_id"] != digest(science):
-            raise WorkflowError("Analysis belongs to a different scientific plan")
-        verify_hashes(root, ready["hashes"])
+        validate_final(root, science, calc)
         result = read(directory / "result.json")
         if result["science_id"] != digest(science) or (result["calculation"], result["replica"]) != (calc["id"], calc["replica"]):
             raise WorkflowError("Result identity mismatch")

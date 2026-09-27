@@ -35,6 +35,17 @@ def test_checkpoint_resume_requires_exact_stored_target(cycle):
     Reporter.target = 2500
     with pytest.raises(WorkflowError, match="target differs"):
         iteration_status(root, science, calc, "B", unit, Reporter)
+    Reporter.target = 2000
+    Reporter.checkpoint = 2050
+    with pytest.raises(WorkflowError, match="Corrupt replica/checkpoint"):
+        iteration_status(root, science, calc, "B", unit, Reporter)
+    Reporter.checkpoint = 2000
+    def invalid_coordinates(self, **kwargs):
+        from types import SimpleNamespace
+        return [SimpleNamespace(positions=[[math.nan, 0., 0.]])] * len(unit["ilam"])
+    Reporter.read_sampler_states = invalid_coordinates
+    with pytest.raises(WorkflowError, match="invalid checkpoint coordinates"):
+        iteration_status(root, science, calc, "B", unit, Reporter)
 
 
 def cycle_records(science):

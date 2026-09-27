@@ -6,11 +6,13 @@ import subprocess
 
 from .backends import local, slurm
 from .backends.common import graph, incomplete_graph, launch, snapshot
-from .common import WorkflowError, digest, file_hashes, lock, read, verify_hashes, write
+from .artifacts import (commit_manifest, global_dependencies, group_dependencies, group_state, paths,
+                        validate_final, validate_global, validate_preparation)
+from .common import WorkflowError, digest, file_hashes, lock, read
 from .config import site_config
 from .integrity import verify_upstream
-from .planning import load_run
-from .runtime import activate_source, source_environment, source_identity
+from .planning import calculation, load_run, units, workdir
+from .runtime import activate_source, fingerprint, source_environment, source_identity
 
 
 def prepare(root, site_path):
@@ -20,18 +22,18 @@ def prepare(root, site_path):
     science = load_run(root)
     with lock(root / "execution.lock"):
         if (root / "prepared.json").exists():
-            load_run(root, prepared=True)
+            validate_global(root, science)
             return {"run": str(root), "prepared": True, "reused": True}
-        attempt = snapshot(root, site, "prepare")
+        attempt = snapshot(root, site, "prepare", science)
         launch(root, site, attempt / "site.json", "receptor", role="receptor", log=attempt / "receptor.log")
         backend = science["forcefield"]["ligand"]["backend"]
         for name in science["campaign"]["ligands"]:
             launch(root, site, attempt / "site.json", "parameterize", ["--ligand", name], role=backend,
                    log=attempt / f"{name}.log")
-        ready = {"science_id": digest(science), "hashes": file_hashes(root, ["receptor", "parameters"])}
-        if not ready["hashes"]:
-            raise WorkflowError("Preparation produced no files")
-        write(root / "prepared.json", ready)
+        outputs = [root / name for name in file_hashes(root, ["receptor", "parameters"])]
+        commit_manifest(root / "prepared.json", root, science, "global_inputs", outputs,
+                        global_dependencies(science), fingerprint(site), attempt.name)
+        validate_global(root, science)
         return {"run": str(root), "prepared": True, "attempt": str(attempt)}
 
 
@@ -53,7 +55,7 @@ def execute(root, site_path, resume=False, dry_run=False):
                 backend.ensure_idle(root, site, resume, cancel_pending=not dry_run)
             else:
                 backend.ensure_idle(root, site, resume)
-        attempt = snapshot(root, site, "preview" if dry_run else "resume" if resume else "submit")
+        attempt = snapshot(root, site, "preview" if dry_run else "resume" if resume else "submit", science)
         tasks = graph(science)
         if resume:
             load_run(root, prepared=True)
@@ -67,20 +69,95 @@ def status(root):
     """Do not open NetCDF files while jobs may be writing to them."""
     root = Path(root).resolve()
     science = load_run(root)
+    global_ready = (root / "prepared.json").exists()
+    if global_ready:
+        validate_global(root, science)
     output = []
+    preparation = {}
     for calc in science["calculations"]:
         directory = root / "calculations" / calc["key"]
-        state = "planned"
-        if (directory / "prep.ok.json").exists():
-            state = "system prepared"
+        if paths(root, calc).exists():
+            validate_preparation(root, science, calc)
+            preparation[calc["key"]] = "complete"
+        else:
+            preparation[calc["key"]] = "partial" if directory.exists() else "not_started"
+    dependencies_cache = {}
+    for calc in science["calculations"]:
+        directory = root / "calculations" / calc["key"]
+        prep = preparation[calc["key"]]
+        groups = {}
+        for leg in "AB":
+            entries = []
+            owner = calculation(science, calc["solvent_owner"]) if leg == "A" else calc
+            shared = owner["key"] != calc["key"]
+            owner_prep = preparation[owner["key"]]
+            dependencies = None
+            if owner_prep == "complete":
+                key = (owner["key"], leg)
+                if key not in dependencies_cache:
+                    dependencies_cache[key] = group_dependencies(root, science, calc, leg)
+                dependencies = dependencies_cache[key]
+            for unit in units(root, science, calc, leg):
+                if owner_prep == "complete":
+                    state = group_state(root, science, calc, leg, unit, dependencies=dependencies)
+                    group_status = "recorded_unverified" if state["complete"] else "incomplete"
+                else:
+                    if paths(root, owner, leg, unit).exists():
+                        raise WorkflowError(f"Simulation record without validated system preparation: {paths(root, owner, leg, unit)}")
+                    group_status = "not_started" if owner_prep == "not_started" else "preparing"
+                entry = {"index": unit["index"], "state": group_status}
+                if shared:
+                    entry["owner"] = owner["key"]
+                entries.append(entry)
+            groups[leg] = {"owner": owner["key"], "shared": shared,
+                           "completed_records": sum(v["state"] == "recorded_unverified" for v in entries),
+                           "total": len(entries), "units": entries}
+        analysis_dir = workdir(root, calc) / "analysis"
+        partial_outputs = [directory / name for name in
+                           ("completion_audit.json", "partner_occupancy.json", "result.json")]
+        partial_outputs += [analysis_dir / name for name in
+                            ("A_fe_table.tsv", "B_fe_table.tsv", "R_fe_table.tsv", "sys_abfe.tsv")]
+        finalized = "not_started"
         if (directory / "finalized.json").exists():
-            verify_hashes(root, read(directory / "finalized.json")["hashes"])
+            validate_final(root, science, calc)
+            finalized = "complete"
+        elif any(path.is_file() for path in partial_outputs):
+            finalized = "partial"
+        completed = sum(value["completed_records"] for value in groups.values())
+        total = sum(value["total"] for value in groups.values())
+        if finalized == "complete":
             state = "finalized"
-        output.append({"calculation": calc["key"], "state": state})
+        elif finalized == "partial":
+            state = "finalizing"
+        elif prep == "partial":
+            state = "preparing"
+        elif prep == "not_started":
+            state = "not_started"
+        elif completed == total:
+            state = "ready_for_finalization"
+        elif completed:
+            state = "sampling"
+        else:
+            state = "prepared"
+        output.append({"calculation": calc["key"], "state": state,
+                       "system_preparation": prep, "groups": groups, "finalization": finalized})
     jobs = slurm.job_records(root)
-    return {"run": str(root), "inputs_prepared": (root / "prepared.json").exists(),
-            "calculations": output, "submitted_jobs": jobs,
-            "note": "File status only; use squeue/sacct for live Slurm state. Resume audits stopped trajectories."}
+    from .backends.common import prior_attempts
+    attempts = []
+    for directory, value in prior_attempts(root, include_all=True):
+        graph_path = directory / "task_graph.json"
+        selected = read(graph_path) if graph_path.exists() else None
+        if selected and (selected.get("task_graph_id") != digest(selected.get("tasks")) or
+                         selected.get("workflow_graph_id") != value.get("workflow_graph_id")):
+            raise WorkflowError(f"Attempt task graph provenance changed: {graph_path}")
+        attempts.append({"id": directory.name, "purpose": value["purpose"], "site": value["site"],
+                         "science_id": value.get("science_id"), "site_id": value["site_id"],
+                         "workflow_graph_id": value.get("workflow_graph_id"),
+                         "task_graph_id": selected["task_graph_id"] if selected else None})
+    return {"run": str(root), "inputs_prepared": global_ready,
+            "global_inputs": "complete" if global_ready else "not_started", "calculations": output,
+            "attempts": attempts, "submitted_jobs": jobs,
+            "note": "Read-only manifest status; checkpointed trajectories are verified after writers stop during resume."}
 
 
 def doctor(site_path):

@@ -11,7 +11,7 @@ python:
 mpi: {command: mpirun, ranks: 4, extra_args: [--oversubscribe]}
 mps: true
 resources:
-  prep: {cpus: 8, memory: 64G, walltime: '04:00:00'}
+  prep: {cpus: 8, memory: 48G, walltime: '04:00:00'}
   array: {cpus: 8, memory: 64G, walltime: '24:00:00'}
   analysis: {cpus: 4, memory: 64G, walltime: '04:00:00'}
 slurm:

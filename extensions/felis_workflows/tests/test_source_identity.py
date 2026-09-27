@@ -224,9 +224,8 @@ def test_group_subprocess_uses_workdir_and_source_environment(cycle, site, monke
     (work / "trj").mkdir(parents=True)
     monkeypatch.setattr(worker, "check_prepared", lambda *args: None)
     monkeypatch.setattr(worker, "allocation", lambda *args: nullcontext())
-    import felis_workflows.validation as validation
     state = iter([{"complete": False}, {"complete": True}])
-    monkeypatch.setattr(validation, "iteration_status", lambda *args: next(state))
+    monkeypatch.setattr(worker, "group_state", lambda *args, **kwargs: next(state))
     calls = []
     monkeypatch.setattr(worker.subprocess, "run", lambda argv, **kw: calls.append((argv, kw)))
     worker.simulate_group(root, science, calc, read(site), "A", 0)

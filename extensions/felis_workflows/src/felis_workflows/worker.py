@@ -9,26 +9,21 @@ import shutil
 import subprocess
 import sys
 
-from .common import WorkflowError, digest, file_hashes, lock, read, sha256, verify_hashes, write
+from .artifacts import (PREP_STAGES, commit_manifest, final_dependencies, group_state,
+                        paths, prep_dependencies, validate_final,
+                        validate_preparation, write_once)
+from .common import WorkflowError, digest, lock, read, sha256, write
 from .planning import abfe_config, calculation, load_run, units, workdir
 from .runtime import activate_source, allocation, check_runtime, mpi_command, source_environment, stages
-
-PREP_STAGES = ["makebox", "boresch_em", "boresch_npt", "boresch_post_process", "sysA_em", "sysB_em"]
-
 
 def calcdir(root, calc):
     return Path(root) / "calculations" / calc["key"]
 
 
 def check_prepared(root, science, calc, site):
-    ready = read(calcdir(root, calc) / "prep.ok.json")
-    if ready["science_id"] != digest(science):
-        raise WorkflowError("Prepared system belongs to a different plan")
-    if ready["root"] != str(Path(root).resolve()):
-        raise WorkflowError("An initialized FELIS system moved; use its original absolute mount path or prepare a new run")
-    verify_hashes(root, ready["hashes"])
-    check_runtime(root, site)
-    return ready
+    current_runtime = check_runtime(root, site)
+    validate_preparation(root, science, calc, current_runtime)
+    return current_runtime
 
 
 def prepare_system(root, science, calc, site):
@@ -39,12 +34,14 @@ def prepare_system(root, science, calc, site):
         if (directory / "prep.ok.json").exists():
             check_prepared(root, science, calc, site)
             return
-        check_runtime(root, site)
         anchor = directory / "location.json"
+        if anchor.exists() and not (root / "runtime.json").is_file():
+            raise WorkflowError("Partial FELIS preparation lacks its runtime identity; cannot safely continue")
+        runtime = check_runtime(root, site)
         current = {"root": str(root), "science_id": digest(science)}
         if anchor.exists() and read(anchor) != current:
             raise WorkflowError("A partial FELIS preparation moved or changed scientific settings")
-        write(anchor, current)
+        write_once(anchor, current)
         input_dir = directory / "input"
         input_dir.mkdir(exist_ok=True)
         # FELIS identifies the work directory by the target SDF stem.
@@ -77,47 +74,50 @@ def prepare_system(root, science, calc, site):
             write(work / f"prepare/sys{leg}_lam.json", {"ab": {"lam_list": science["ladders"][leg]["lambdas"]}})
         files = [*input_dir.rglob("*"), *list((work / "prepare").rglob("*")), config,
                  directory / "assembly_validation.json"]
-        write(directory / "prep.ok.json", {"science_id": digest(science), "root": str(root), "hashes": {
-            str(p.relative_to(root)): sha256(p) for p in files if p.is_file()}})
+        commit_manifest(paths(root, calc), root, science, "system_preparation",
+                        [p for p in files if p.is_file()], prep_dependencies(root, science, calc), runtime,
+                        site.get("_attempt_id", "direct"), calculation=calc["key"], task=f"prep:{calc['key']}")
+        validate_preparation(root, science, calc, runtime)
 
 
 def simulate_group(root, science, calc, site, leg, index):
-    from .validation import iteration_status
     if leg == "A" and calc["solvent_owner"] != calc["key"]:
         raise WorkflowError("A shared solvent calculation must be run through its owner")
-    check_prepared(root, science, calc, site)
+    producer_runtime = check_prepared(root, science, calc, site)
     item = units(root, science, calc, leg)[index]
     work = workdir(root, calc)
     if site["mpi"]["ranks"] * len(item["ilam"]) > 48:
         raise WorkflowError("MPI ranks times states exceed the pinned FELIS context limit; reduce site MPI ranks")
     with lock(work / "trj" / f'{item["stem"]}.lock'):
-        status = iteration_status(root, science, calc, leg, item)
+        status = group_state(root, science, calc, leg, item, semantic=True,
+                             producer=site.get("_attempt_id", "direct"), producer_runtime=producer_runtime)
         if status["complete"]:
             return
         with allocation(site):
             subprocess.run(mpi_command(site, item["argv"]), cwd=work,
                            env=source_environment(site), check=True)
-        status = iteration_status(root, science, calc, leg, item)
+        status = group_state(root, science, calc, leg, item, semantic=True,
+                             producer=site.get("_attempt_id", "direct"), producer_runtime=producer_runtime)
         if not status["complete"]:
             raise WorkflowError(f"Simulation stopped before its iteration target: {status}")
-        write(calcdir(root, calc) / "completion" / f'{item["stem"]}.json', status)
 
 
 def finalize(root, science, calc, site):
-    from .validation import iteration_status, partner_occupancy
-    check_prepared(root, science, calc, site)
+    from .validation import partner_occupancy
+    producer_runtime = check_prepared(root, science, calc, site)
     directory, work = calcdir(root, calc), workdir(root, calc)
     with lock(directory / "analysis.lock"):
-        if (directory / "finalized.json").exists():
-            verify_hashes(root, read(directory / "finalized.json")["hashes"])
-            return
         owner = calculation(science, calc["solvent_owner"])
         check_prepared(root, science, owner, site)
-        reports = [iteration_status(root, science, calc, leg, item)
+        reports = [group_state(root, science, calc, leg, item, semantic=True,
+                               producer=site.get("_attempt_id", "direct"), producer_runtime=producer_runtime)
                    for leg in "AB" for item in units(root, science, calc, leg)]
-        write(directory / "completion_audit.json", {"groups": reports})
         if not all(v["complete"] for v in reports):
             raise WorkflowError("Finalization requires every group to reach its iteration target")
+        if (directory / "finalized.json").exists():
+            validate_final(root, science, calc)
+            return
+        write(directory / "completion_audit.json", {"groups": reports})
         occupancy = partner_occupancy(root, science, calc)
         write(directory / "partner_occupancy.json", occupancy)
         # Calculate raw ABFE even when occupancy fails, but mark it ineligible
@@ -129,8 +129,8 @@ def finalize(root, science, calc, site):
         analysis.mkdir(exist_ok=True)
         p = science["protocol"]
         for leg, source in [("A", workdir(root, owner)), ("B", work)]:
-            paths = [str(source / "trj" / f'{u["stem"]}.nc') for u in units(root, science, calc, leg)]
-            calc_mbar(stem=leg, nc_list=paths, checkpoint_interval=p["checkpoint_interval"], outdir=str(analysis))
+            trajectories = [str(source / "trj" / f'{u["stem"]}.nc') for u in units(root, science, calc, leg)]
+            calc_mbar(stem=leg, nc_list=trajectories, checkpoint_interval=p["checkpoint_interval"], outdir=str(analysis))
         calc_restraints(boresch_cfg_json=str(work / "prepare/sys_boresch_cfg.json"), outdir=str(analysis))
         summarize_fe(workdir=str(analysis), ligand=calc["target"],
                      lam_sol_cfg=str(work / "prepare/sysA_lam.json"), lam_pro_cfg=str(work / "prepare/sysB_lam.json"))
@@ -149,24 +149,29 @@ def finalize(root, science, calc, site):
         write(directory / "result.json", record)
         files = [analysis / name for name in ["A_fe_table.tsv", "B_fe_table.tsv", "R_fe_table.tsv", "sys_abfe.tsv"]]
         files += [directory / "result.json", directory / "completion_audit.json", directory / "partner_occupancy.json"]
-        write(directory / "finalized.json", {"science_id": digest(science), "hashes": {
-            str(path.relative_to(root)): sha256(path) for path in files}})
+        commit_manifest(paths(root, calc, "final"), root, science, "finalization", files,
+                        final_dependencies(root, science, calc), producer_runtime,
+                        site.get("_attempt_id", "direct"), calculation=calc["key"],
+                        task=f"finalize:{calc['key']}")
 
 
 def probe(root, science, site, destination):
-    from .validation import iteration_status
     output = {}
     for calc in science["calculations"]:
         directory = calcdir(root, calc)
-        done = (directory / "prep.ok.json").exists()
+        done = paths(root, calc).exists()
         if done:
-            check_prepared(root, science, calc, site)
+            producer_runtime = check_prepared(root, science, calc, site)
         entry = {"prep": done, "A": [], "B": [], "finalize": False}
         for leg in "AB":
             for item in units(root, science, calc, leg):
-                entry[leg].append(iteration_status(root, science, calc, leg, item)["complete"] if done else False)
+                if not done and paths(root, calc, leg, item).exists():
+                    raise WorkflowError(f"Simulation record without validated system preparation: {paths(root, calc, leg, item)}")
+                entry[leg].append(group_state(root, science, calc, leg, item, semantic=True,
+                                              producer=site.get("_attempt_id", "direct"),
+                                              producer_runtime=producer_runtime)["complete"] if done else False)
         if (directory / "finalized.json").exists():
-            verify_hashes(root, read(directory / "finalized.json")["hashes"])
+            validate_final(root, science, calc)
             entry["finalize"] = True
         output[calc["key"]] = entry
     write(destination, output)
@@ -185,6 +190,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     root = args.run.resolve()
     site = read(args.site)
+    if args.site.parent.parent.name == "executions":
+        site["_attempt_id"] = args.site.parent.name
     activate_source(site)
     science = load_run(root, prepared=args.task not in {"receptor", "parameterize"})
     if args.task == "receptor":

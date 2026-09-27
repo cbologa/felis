@@ -38,7 +38,8 @@ def main(argv=None):
         elif args.command == "verify-upstream":
             from .integrity import verify_upstream
             from .planning import default_repo
-            result = verify_upstream(args.repo or default_repo())
+            from .runtime import select_source
+            result = verify_upstream(select_source({"repo": str(args.repo or default_repo())}))
         elif args.command == "analyze":
             from .analysis import analyze
             result = analyze(args.run, args.corrections)

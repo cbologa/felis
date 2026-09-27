@@ -8,11 +8,11 @@ import shutil
 from . import UPSTREAM_COMMIT, __version__
 from .common import WorkflowError, digest, file_hashes, read, sha256, verify_hashes, write
 from .config import campaign_config, forcefield_config, protocol_config
-from .integrity import verify_upstream
 
 
 def default_repo():
-    return Path(os.environ.get("FELIS_REPO", Path(__file__).resolve().parents[4])).resolve()
+    from .runtime import repository_root, source_checkout
+    return repository_root(os.environ["FELIS_REPO"]) if os.environ.get("FELIS_REPO") else source_checkout()
 
 
 def copy_topology(source, destination, include_dirs=()):
@@ -80,8 +80,8 @@ def seed_for(base, *labels):
 
 
 def plan(campaign, forcefield, protocol, output, repo=None):
-    repo = Path(repo or default_repo()).resolve()
-    verify_upstream(repo)
+    from .runtime import activate_source
+    repo = activate_source({"repo": str(repo or default_repo())})
     c, f, p = campaign_config(campaign), forcefield_config(forcefield), protocol_config(protocol)
     ladder = lambdas(repo, p)
     root = Path(output).resolve()

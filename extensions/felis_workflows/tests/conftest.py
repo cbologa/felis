@@ -34,9 +34,9 @@ def site(tmp_path):
 
 @pytest.fixture
 def cycle(tmp_path, monkeypatch):
-    import felis_workflows.planning as planning
+    import felis_workflows.runtime as runtime
     # Test integrity separately. Here the fixture isolates planning semantics.
-    monkeypatch.setattr(planning, "verify_upstream", lambda _: None)
+    monkeypatch.setattr(runtime, "verify_upstream", lambda _: None)
     value = read(EXTENSION / "campaigns/coupling.yaml")
     pdb = tmp_path / "receptor.pdb"
     pdb.write_text("REMARK planning fixture; not a physical receptor\n")

@@ -11,7 +11,7 @@ import sys
 
 from .common import WorkflowError, digest, file_hashes, lock, read, sha256, verify_hashes, write
 from .planning import abfe_config, calculation, load_run, units, workdir
-from .runtime import allocation, check_runtime, mpi_command, stages
+from .runtime import activate_source, allocation, check_runtime, mpi_command, source_environment, stages
 
 PREP_STAGES = ["makebox", "boresch_em", "boresch_npt", "boresch_post_process", "sysA_em", "sysB_em"]
 
@@ -58,7 +58,7 @@ def prepare_system(root, science, calc, site):
         write(config, cfg)
         work = workdir(root, calc)
         with allocation(site):
-            stages(config, ["makebox"], site, calc["prep_seed"])
+            stages(config, ["makebox"], site, calc["prep_seed"], work)
             write(directory / "assembly_validation.json", validate_assembled(root, science, calc))
             gmx = shutil.which("gmx")
             if not gmx:
@@ -69,7 +69,7 @@ def prepare_system(root, science, calc, site):
                                     "-c", str(work / f"prepare/sys{leg}.gro"), "-p", str(work / f"prepare/sys{leg}.top"),
                                     "-o", str(directory / f"grompp_{leg}.tpr"), "-po", str(directory / f"grompp_{leg}.mdp")],
                                    cwd=directory, stdout=log, stderr=subprocess.STDOUT, check=True)
-            stages(config, PREP_STAGES[1:], site, calc["prep_seed"])
+            stages(config, PREP_STAGES[1:], site, calc["prep_seed"], work)
         for stage in PREP_STAGES:
             if not (work / "progress" / f"{stage}.done").exists():
                 raise WorkflowError(f"Incomplete preparation: {stage}")
@@ -95,7 +95,8 @@ def simulate_group(root, science, calc, site, leg, index):
         if status["complete"]:
             return
         with allocation(site):
-            subprocess.run(mpi_command(site, item["argv"]), cwd=work, check=True)
+            subprocess.run(mpi_command(site, item["argv"]), cwd=work,
+                           env=source_environment(site), check=True)
         status = iteration_status(root, science, calc, leg, item)
         if not status["complete"]:
             raise WorkflowError(f"Simulation stopped before its iteration target: {status}")
@@ -183,10 +184,9 @@ def main(argv=None):
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
     root = args.run.resolve()
-    science = load_run(root, prepared=args.task not in {"receptor", "parameterize"})
     site = read(args.site)
-    from .integrity import verify_upstream
-    verify_upstream(site["repo"])
+    activate_source(site)
+    science = load_run(root, prepared=args.task not in {"receptor", "parameterize"})
     if args.task == "receptor":
         from .preparation.receptor import build
         build(root, science)

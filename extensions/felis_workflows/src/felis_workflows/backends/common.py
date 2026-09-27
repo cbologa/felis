@@ -24,7 +24,7 @@ def worker_script(root, site, site_path, task, arguments=(), python_role="simula
     lines = ["#!/bin/bash", "set -euo pipefail"]
     if site.get("bootstrap"):
         lines += ["set +u", f"source {shlex.quote(site['bootstrap'])}", "set -u"]
-    for name in ["PYTHONPATH", "OMP_NUM_THREADS", "OPENMM_CPU_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "JAX_PLATFORMS"]:
+    for name in ["FELIS_REPO", "PYTHONPATH", "OMP_NUM_THREADS", "OPENMM_CPU_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "JAX_PLATFORMS"]:
         lines.append(f"export {name}={shlex.quote(env[name])}")
     lines += ['export TMPDIR="${SLURM_TMPDIR:-/tmp}"', 'test -d "$TMPDIR" && test -w "$TMPDIR"',
               f"cd {shlex.quote(str(Path(root).resolve()))}"]

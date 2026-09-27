@@ -56,6 +56,25 @@ GPUs or the molecular toolchains. Worker scripts put this checkout first on
 Each worker environment needs PyYAML. Installing the extension into every
 environment is optional when using the generated scripts.
 
+Set `site.repo` to the absolute checkout used for workers (or use
+`${FELIS_REPO}` in the site file). `plan` and `verify-upstream` select a checkout
+with `--repo`, `FELIS_REPO`, or a recognizable source/editable installation; an
+unidentifiable installed package fails with a request for an explicit checkout.
+Runtime `FELIS_REPO` and `--repo` values must be absolute; a relative path in a
+site file is resolved relative to that file before reaching the runtime layer.
+The CLI must itself import `felis_workflows` from that checkout (use its editable
+installation or put its `extensions/felis_workflows/src` on `PYTHONPATH`); an
+already loaded implementation from another location fails. Conflicting
+selections fail. Generated workers export absolute `FELIS_REPO` and
+put `extensions/felis_workflows/src` and the repository root first on
+`PYTHONPATH`. Empty and relative inherited entries are removed, so an arbitrary
+shell directory cannot select a different `felis`, `felis_workflows`, or bundled
+`bytemol`. Pre-imported modules from another checkout fail. The selected
+checkout passes `verify-upstream` before new FELIS or bytemol code is imported.
+FELIS stages enter their calculation's `work/<target>` directory explicitly,
+where native `prepare/...` paths are relative; array processes use that same
+directory as their subprocess CWD.
+
 Copy a site YAML to your own configuration directory and edit it. Easley's
 starting values come from the existing scripts. Hopper and generic Slurm have
 partition placeholders that intentionally fail validation until filled in.
@@ -77,6 +96,18 @@ only in site settings. The parent shell needs the Slurm client commands in PATH.
 ```bash
 felis-workflow doctor --site /path/to/my-easley.yaml
 ```
+
+`doctor` reports the configured checkout, Git revision, Python executable,
+Python implementation/version, and resolved FELIS, workflow, and bundled
+bytemol source files for the CLI and each configured Python runner. It checks
+source identity without allocating a GPU. `runtime.json` also records these
+identities alongside the existing package versions and source hashes. On
+continuation, stable Python implementation/version, package versions, and
+executable source hashes must match preparation. Absolute checkout and Python
+paths and Git revision remain diagnostic, so relocation with identical content
+does not by itself invalidate a run. Each invocation still validates that
+imports originate in its configured checkout. Older runtime snapshots without
+source identity cannot be safely continued by this version.
 
 Each simulation task uses **one full NVIDIA GPU**. The launcher retains Slurm's
 GPU visibility, resolves its CUDA UUID, and optionally creates a private MPS

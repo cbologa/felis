@@ -1,4 +1,5 @@
 from __future__ import annotations
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -9,12 +10,13 @@ from .common import WorkflowError, digest, file_hashes, lock, read, verify_hashe
 from .config import site_config
 from .integrity import verify_upstream
 from .planning import load_run
+from .runtime import activate_source, source_environment, source_identity
 
 
 def prepare(root, site_path):
     root = Path(root).resolve()
     site = site_config(site_path)
-    verify_upstream(site["repo"])
+    activate_source(site)
     science = load_run(root)
     with lock(root / "execution.lock"):
         if (root / "prepared.json").exists():
@@ -36,7 +38,7 @@ def prepare(root, site_path):
 def execute(root, site_path, resume=False, dry_run=False):
     root = Path(root).resolve()
     site = site_config(site_path)
-    verify_upstream(site["repo"])
+    activate_source(site)
     science = load_run(root, prepared=not dry_run)
     if max(len(g) for leg in science["ladders"].values() for g in leg["groups"]) * site["mpi"]["ranks"] > 48:
         raise WorkflowError("MPI ranks times states exceed 48; reduce site.mpi.ranks")
@@ -83,6 +85,7 @@ def status(root):
 
 def doctor(site_path):
     site = site_config(site_path)
+    identity = source_identity(site)
     integrity = verify_upstream(site["repo"])
     commands = {site["mpi"]["command"], *(v[0] for v in site["python"].values())}
     if site["mps"]:
@@ -96,6 +99,22 @@ def doctor(site_path):
         script += "source " + shlex.quote(site["bootstrap"]) + "\n"
     for command in sorted(commands):
         script += "command -v " + shlex.quote(command) + "\n"
-    answer = subprocess.check_output(["bash", "-c", script], text=True)
+    env = source_environment(site)
+    answer = subprocess.check_output(["bash", "-c", script], text=True, env=env)
+    probe = ("import json, os; from felis_workflows.runtime import source_identity; "
+             "print('FELIS_IDENTITY_JSON=' + json.dumps(source_identity({'repo': os.environ['FELIS_REPO']})))")
+    runners = {}
+    for role, command in site["python"].items():
+        output = subprocess.check_output(["bash", "-c", script + "exec " + shlex.join([*command, "-c", probe])],
+                                         text=True, env=env)
+        records = [line.removeprefix("FELIS_IDENTITY_JSON=") for line in output.splitlines()
+                   if line.startswith("FELIS_IDENTITY_JSON=")]
+        if len(records) != 1:
+            raise WorkflowError(f"Python runner {role} did not report source identity")
+        try:
+            runners[role] = json.loads(records[0])
+        except json.JSONDecodeError as error:
+            raise WorkflowError(f"Python runner {role} reported invalid source identity") from error
     return {"site": site["name"], "upstream": integrity, "commands": answer.splitlines(),
+            "source": identity, "runners": runners,
             "note": "Configuration/commands checked. This does not allocate a GPU or qualify the scientific environments."}

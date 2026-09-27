@@ -2,6 +2,7 @@
 from __future__ import annotations
 from contextlib import contextmanager
 import ctypes
+import importlib
 import importlib.metadata
 import os
 from pathlib import Path
@@ -11,35 +12,118 @@ import sys
 import tempfile
 
 from .common import WorkflowError, digest, read, sha256, write
+from .integrity import verify_upstream
 from .planning import seed_for
 
 
 def source_environment(site):
     env = os.environ.copy()
-    repo = Path(site["repo"])
+    repo = repository_root(site["repo"])
     extension = repo / "extensions/felis_workflows/src"
-    env["PYTHONPATH"] = os.pathsep.join([str(extension), str(repo), env.get("PYTHONPATH", "")])
+    prefixes = [str(extension), str(repo)]
+    # Relative and empty inherited entries depend on the worker's CWD.
+    inherited = [part for part in env.get("PYTHONPATH", "").split(os.pathsep)
+                 if part and Path(part).is_absolute() and part not in prefixes]
+    env["PYTHONPATH"] = os.pathsep.join([*prefixes, *inherited])
+    env["FELIS_REPO"] = str(repo)
     for name in ["OMP_NUM_THREADS", "OPENMM_CPU_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"]:
         env[name] = "1"
     env["JAX_PLATFORMS"] = "cpu"
     return env
 
 
-def activate_source(site):
-    repo = Path(site["repo"]).resolve()
-    for path in [str(repo), str(repo / "extensions/felis_workflows/src")]:
-        if path in sys.path:
-            sys.path.remove(path)
-        sys.path.insert(0, path)
-    os.environ.update(source_environment(site))
-    import felis
-    if not Path(felis.__file__).resolve().is_relative_to(repo):
-        raise WorkflowError("FELIS imported from the wrong checkout")
+def repository_root(value):
+    if not value:
+        raise WorkflowError("Select a FELIS checkout with --repo, site.repo or FELIS_REPO")
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        raise WorkflowError(f"FELIS repository identity must be absolute: {value}")
+    repo = path.resolve()
+    expected = [repo / "felis/__init__.py", repo / "bytemol/__init__.py",
+                repo / "extensions/felis_workflows/src/felis_workflows/__init__.py"]
+    if not all(path.is_file() for path in expected):
+        raise WorkflowError(f"Not a FELIS source checkout: {repo}")
     return repo
 
 
-def fingerprint(site):
+def source_checkout():
+    """Use an editable source installation only when its layout identifies a checkout."""
+    package = Path(__file__).resolve()
+    candidate = package.parents[4]
+    try:
+        repo = repository_root(candidate)
+    except WorkflowError as error:
+        raise WorkflowError("Workflow installation does not identify a source checkout; specify --repo or FELIS_REPO") from error
+    if package != repo / "extensions/felis_workflows/src/felis_workflows/runtime.py":
+        raise WorkflowError("Workflow installation does not identify a source checkout; specify --repo or FELIS_REPO")
+    return repo
+
+
+def _check_imports(repo):
+    roots = {"felis": (repo / "felis").resolve(),
+             "bytemol": (repo / "submodule/bytemol/bytemol").resolve(),
+             "felis_workflows": (repo / "extensions/felis_workflows/src/felis_workflows").resolve()}
+    for name, module in tuple(sys.modules.items()):
+        package = name.partition(".")[0]
+        if package not in roots or module is None:
+            continue
+        filename = getattr(module, "__file__", None)
+        path = Path(filename).resolve() if filename else None
+        expected = roots[package]
+        namespace = [Path(p).resolve() for p in getattr(module, "__path__", ())] if path is None else []
+        if ((path is None and (name == package or not namespace or
+                              any(not p.is_relative_to(expected) for p in namespace))) or
+                (path is not None and name == package and path != expected / "__init__.py") or
+                (path is not None and name != package and not path.is_relative_to(expected))):
+            raise WorkflowError(f"{name} imported from {path}; configured checkout is {repo}")
+
+
+def select_source(site):
+    """Select a checkout and reject conflicting imports without loading FELIS."""
+    repo = repository_root(site["repo"])
+    selected = os.environ.get("FELIS_REPO")
+    if selected and repository_root(selected) != repo:
+        raise WorkflowError(f"FELIS_REPO selects {selected}, but site.repo selects {repo}")
+    _check_imports(repo)
+    return repo
+
+
+def activate_source(site):
+    repo = select_source(site)
+    verify_upstream(repo)  # No new FELIS or bytemol code is imported before this succeeds.
+    env = source_environment(site)
+    os.environ.update(env)
+    sys.path[:] = [*env["PYTHONPATH"].split(os.pathsep),
+                   *(p for p in sys.path if p and str(Path(p).resolve()) not in
+                     {str(repo), str(repo / "extensions/felis_workflows/src")})]
+    importlib.invalidate_caches()
+    importlib.import_module("felis")
+    importlib.import_module("bytemol")
+    importlib.import_module("felis_workflows")
+    _check_imports(repo)
+    return repo
+
+
+def source_identity(site):
     repo = activate_source(site)
+    try:
+        revision = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
+                                  capture_output=True, text=True, check=False)
+        commit = revision.stdout.strip() if revision.returncode == 0 else None
+    except OSError:
+        commit = None
+    return {"repository": str(repo), "git_commit": commit,
+            "python_executable": str(Path(sys.executable).absolute()),
+            "felis_source": str(Path(sys.modules["felis"].__file__).resolve()),
+            "bytemol_source": str(Path(sys.modules["bytemol"].__file__).resolve()),
+            "python_runtime": {"implementation": sys.implementation.name,
+                               "version": list(sys.version_info[:3]), "cache_tag": sys.implementation.cache_tag},
+            "felis_workflows_source": str(Path(sys.modules["felis_workflows"].__file__).resolve())}
+
+
+def fingerprint(site):
+    source = source_identity(site)
+    repo = Path(source["repository"])
     versions = {}
     for package in ["openmm", "openmmtools", "numpy", "pymbar", "mdtraj", "mpi4py", "parmed", "rdkit"]:
         try:
@@ -55,14 +139,23 @@ def fingerprint(site):
     config = GlobalKeys()
     if config.integrator.dt_ps != .002 or config.integrator.targetT_K != 298.15:
         raise WorkflowError("Pinned FELIS integrator defaults changed")
-    return {"versions": versions, "source_hashes": hashes}
+    return {"versions": versions, "source_hashes": hashes,
+            "source_identity": source}
 
 
 def check_runtime(root, site):
     path = Path(root) / "runtime.json"
     current = fingerprint(site)
     if path.exists():
-        if read(path) != current:
+        recorded = read(path)
+        # Absolute origins and Git revision diagnose selection at each invocation.
+        # Continuation depends on executable content, package versions and ABI,
+        # not on the mount point or the spelling of an equivalent Python runner.
+        if not isinstance(recorded.get("source_identity"), dict) or "python_runtime" not in recorded["source_identity"]:
+            raise WorkflowError("Runtime snapshot lacks source identity; cannot safely continue this run")
+        def compatible(value):
+            return {**value, "source_identity": {"python_runtime": value["source_identity"]["python_runtime"]}}
+        if compatible(recorded) != compatible(current):
             raise WorkflowError("Scientific runtime differs from preparation; use a compatible environment or a new run")
     else:
         write(path, current)
@@ -172,7 +265,7 @@ def install_adapter(site, prep_seed):
     felis.utils.cuda_tools.get_visible_cuda_devices = felis.utils.get_visible_cuda_devices
 
 
-def stages(config_path, stages_to_run, site, seed):
+def stages(config_path, stages_to_run, site, seed, expected_work):
     activate_source(site)
     install_adapter(site, seed)
     from felis.protocols.abfe.config_types import ABFEInputConfig
@@ -180,4 +273,13 @@ def stages(config_path, stages_to_run, site, seed):
     cfg = ABFEInputConfig.from_file(str(config_path))
     cfg.stages = stages_to_run
     cfg.check()
-    mainfunc(cfg)
+    work = (Path(cfg.tmpdir) / Path(cfg.sdffile).stem).resolve()
+    if work != Path(expected_work).resolve():
+        raise WorkflowError(f"FELIS calculation work directory mismatch: {work} != {expected_work}")
+    work.mkdir(parents=True, exist_ok=True)
+    previous = Path.cwd()
+    try:
+        os.chdir(work)
+        mainfunc(cfg)
+    finally:
+        os.chdir(previous)

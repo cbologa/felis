@@ -144,10 +144,8 @@ def load_run(root, prepared=False):
         raise WorkflowError("Workflow/upstream version mismatch")
     verify_hashes(root, s["input_hashes"])
     if prepared:
-        ready = read(root / "prepared.json")
-        if ready["science_id"] != digest(s):
-            raise WorkflowError("Preparation belongs to a different science plan")
-        verify_hashes(root, ready["hashes"])
+        from .artifacts import validate_global
+        validate_global(root, s)
     return s
 
 

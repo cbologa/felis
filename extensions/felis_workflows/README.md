@@ -89,6 +89,8 @@ selects the CPU finalizer, and optional `slurm.prep_partition` selects the
 GPU system-preparation job (defaulting to the array partition). `prepare`,
 which builds the receptor and ligand on CPU, runs in the allocation from which
 you invoke it; the site profile does not request that allocation.
+The shipped GPU system-preparation profiles request **48G**; array and analysis
+memory settings are separate.
 Python runners are argv lists, for example `["/opt/envs/felis/bin/python"]` or
 `[conda, run, --no-capture-output, -n, felis, python]`. These names and paths occur
 only in site settings. The parent shell needs the Slurm client commands in PATH.
@@ -143,6 +145,55 @@ the preparation logs before submission. `submit` schedules GPU system assembly
 and equilibration, solvent/complex arrays, then CPU analysis with dependencies.
 Every bound ligand and fully interacting partner is checked after full-system
 assembly. GROMACS preprocessing must succeed without `-maxwarn`.
+
+## Stage artifacts and restart
+
+The frozen `science.json` and input hashes define the scientific plan. Global
+receptor and ligand preparation commits `prepared.json`; each calculation then
+commits `prep.ok.json` after its FELIS stages and required systems validate.
+Every solvent/complex group has a checkpointed NetCDF trajectory and a small
+terminal `completion/<stem>.json` record written only after quiescent semantic
+validation. `finalized.json` commits the calculation result and analysis files
+after its own and any shared solvent groups validate. The stage graph records
+these dependencies explicitly, including shared solvent ownership.
+
+Terminal manifests use a versioned schema, science/task identity, dependency
+identity, producer attempt, stable runtime compatibility, and SHA-256 hashes of
+small immutable outputs. They are published atomically once; identical content
+may be reused, while conflicting or corrupted records fail. Checkpointed `.nc`
+files are never treated as immutable hash-verifiable outputs. Resume uses the
+native FELIS/OpenMMTools checkpoint and verifies its stored iteration target,
+replica mapping, checkpoint interval and finite coordinates after establishing
+that no scheduler job can still write it. It schedules only incomplete groups
+and dependent finalizers. A stale completion record or corrupt checkpoint is an
+error; it is not silently regenerated. `resume --dry-run` leaves pending jobs
+untouched.
+
+`status` reads manifests and job/attempt history without opening NetCDF, so it
+remains safe while writers are active. It checks that a recorded trajectory
+still exists, without reading or hashing it. Group records shown there are
+explicitly *unverified* until a quiescent probe. Shared solvent groups report
+their owner's completion records, even while the consuming calculation is still
+being prepared. Overall calculation state advances through preparation,
+sampling, recorded groups, and finalization.
+
+Each `executions/<attempt>/` retains an immutable attempt/site snapshot and
+the canonical workflow stage graph identity. After the resume probe, its
+`task_graph.json` records the exact tasks selected for that attempt, with its
+own hash; a resume subset has a different task graph from the full workflow.
+Generated script identities, exact submission commands/dependencies, and job
+IDs remain inspectable as jobs are successfully submitted. Previous attempts
+remain history when resuming. New completion manifests record the worker's
+current source diagnostics; checkout paths, interpreter paths, Git revision,
+and timestamps do not determine continuation compatibility. Continuation
+compares source hashes, package versions, and stable Python identity.
+
+Pre-PR3 terminal markers without this manifest schema cannot certify completed
+artifacts. They fail with an actionable legacy-artifact error instead of being
+automatically blessed. An unrecorded trajectory can receive a completion record
+only after a quiescent semantic validation under a compatible runtime. A partial
+FELIS preparation stays partial until its terminal artifact is validated and
+committed; initialized systems retain their original absolute run mount path.
 
 `--dry-run` writes inspectable shell scripts and submission arguments under
 `executions/` and submits nothing; it can run before molecular preparation.

@@ -2,7 +2,7 @@ from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
 
 from ..common import WorkflowError, write
-from .common import launch, prior_attempts
+from .common import launch, prior_attempts, record_task_graph
 
 
 def ensure_idle(root, site, resume=False):
@@ -15,6 +15,7 @@ def ensure_idle(root, site, resume=False):
 
 
 def submit(root, site, attempt, tasks, dry_run=False):
+    record_task_graph(attempt, tasks)
     write(attempt / "submission_plan.json", {"tasks": tasks, "dry_run": dry_run})
     if dry_run:
         return {"attempt": str(attempt), "dry_run": True, "task_count": len(tasks)}

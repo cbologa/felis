@@ -2,8 +2,9 @@ from __future__ import annotations
 from pathlib import Path
 import subprocess
 
-from ..common import WorkflowError, read, write
-from .common import prior_attempts, worker_script
+from ..artifacts import write_script
+from ..common import WorkflowError, read, sha256, write
+from .common import prior_attempts, record_task_graph, worker_script
 
 
 def job_records(root):
@@ -68,6 +69,8 @@ def submit(root, site, attempt, tasks, dry_run=False):
     ids, jobs, prep_lanes = {}, [], [None] * site["slurm"]["prep_concurrency"]
     prep_index = 0
     previews = []
+    record_task_graph(attempt, tasks)
+    write(attempt / "submission_plan.json", {"tasks": previews, "dry_run": dry_run})
     for task in tasks:
         args = ["--calculation", task["calculation"]]
         action = task["kind"]
@@ -75,7 +78,8 @@ def submit(root, site, attempt, tasks, dry_run=False):
             action = "group"
             args += ["--leg", task["leg"]]
         script = attempt / f"{task['id']}.sh"
-        script.write_text(worker_script(root, site, attempt / "site.json", action, args, array=task["kind"] == "array"))
+        write_script(script, worker_script(root, site, attempt / "site.json", action, args,
+                                          array=task["kind"] == "array"))
         dependencies = [ids[d] for d in task["dependencies"]]
         lane = prep_index % len(prep_lanes)
         if task["kind"] == "prep":
@@ -83,7 +87,9 @@ def submit(root, site, attempt, tasks, dry_run=False):
                 dependencies.append(prep_lanes[lane])
             prep_index += 1
         cmd = submission_command(root, site, attempt, task, script, dependencies)
-        previews.append({"task": task, "argv": cmd})
+        previews.append({"task": task, "argv": cmd, "dependencies": dependencies,
+                         "script_sha256": sha256(script)})
+        write(attempt / "submission_plan.json", {"tasks": previews, "dry_run": dry_run})
         if dry_run:
             jobid = f"DRY_{len(ids)+1}"
         else:
@@ -92,7 +98,8 @@ def submit(root, site, attempt, tasks, dry_run=False):
                 raise WorkflowError(f"Unrecognized sbatch reply: {answer}")
             jobid = answer
             jobs.append({"task_id": task["id"], "kind": task["kind"], "job_id": jobid,
-                         "calculation": task["calculation"], "leg": task.get("leg"), "indices": task.get("indices")})
+                         "calculation": task["calculation"], "leg": task.get("leg"), "indices": task.get("indices"),
+                         "argv": cmd, "dependencies": dependencies, "script_sha256": sha256(script)})
             # Keep every successful submission visible if a later call fails.
             write(attempt / "jobs.json", {"jobs": jobs})
         ids[task["id"]] = jobid

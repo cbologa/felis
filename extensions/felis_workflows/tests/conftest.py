@@ -6,6 +6,7 @@ import pytest
 EXTENSION = Path(__file__).resolve().parents[1]
 REPO = EXTENSION.parents[1]
 sys.path.insert(0, str(EXTENSION / "src"))
+sys.path.insert(0, str(EXTENSION.parent / "felis_endpoint/src"))
 
 from felis_workflows.common import read, write
 from felis_workflows.planning import plan

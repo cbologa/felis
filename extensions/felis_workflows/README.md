@@ -1,5 +1,9 @@
 # Portable FELIS workflows
 
+Derived physical endpoint MD and evidence-only validation qualification are
+documented separately in [the endpoint workflow guide](../felis_endpoint/README.md).
+They do not change this package's ABFE workflow version or runtime fingerprint.
+
 This extension separates molecular inputs, force fields, sampling protocols and
 execution sites. The FELIS base revision is
 `4d2556bfe09753ff63ddf549c3838a517f173b12`. Four narrowly reviewed core

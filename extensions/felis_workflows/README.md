@@ -141,21 +141,31 @@ felis-workflow analyze --run "$run"
 `prepare` runs CPU receptor/ligand preparation in the calling allocation, one
 ligand at a time. Use a CPU allocation if your site's login-node policy requires
 one. Inspect `receptor/audit.json`, ligand `parameters.json`/`validation.json` and
-the preparation logs before submission. `submit` schedules GPU system assembly
-and equilibration, solvent/complex arrays, then CPU analysis with dependencies.
+the preparation logs before submission. `submit` schedules independent GPU
+system assembly and equilibration for each calculation/replica, then its
+solvent/complex arrays and CPU analysis with same-replica dependencies. Slurm
+arrays have no workflow-imposed `%N` limit, and preparation jobs have no
+artificial inter-replica dependencies; Slurm account/QoS controls concurrency.
 Every bound ligand and fully interacting partner is checked after full-system
 assembly. GROMACS preprocessing must succeed without `-maxwarn`.
 
 ## Stage artifacts and restart
 
 The frozen `science.json` and input hashes define the scientific plan. Global
-receptor and ligand preparation commits `prepared.json`; each calculation then
-commits `prep.ok.json` after its FELIS stages and required systems validate.
+receptor and ligand preparation commits `prepared.json`. Each calculation/replica
+commits `assembly.ok.json` after `makebox`, assembly validation and both GROMACS
+preprocessing checks. Its preproduction job then runs `boresch_em`,
+`boresch_npt`, `boresch_post_process`, `sysA_em` and `sysB_em`, committing
+`equil.ok.json` after production starts and configurations validate. This
+manifest identifies the exact assembly manifest and deterministic preparation
+seed; it does not repeatedly hash the large Boresch NPT trajectory.
 Every solvent/complex group has a checkpointed NetCDF trajectory and a small
 terminal `completion/<stem>.json` record written only after quiescent semantic
 validation. `finalized.json` commits the calculation result and analysis files
-after its own and any shared solvent groups validate. The stage graph records
-these dependencies explicitly, including shared solvent ownership.
+after its own and any shared solvent groups validate. A production group
+identifies the exact equilibration manifest and its seed. The stage graph
+records these dependencies, including same-replica shared solvent ownership.
+Replicas never share prepared or equilibrated states.
 
 Terminal manifests use a versioned schema, science/task identity, dependency
 identity, producer attempt, stable runtime compatibility, and SHA-256 hashes of
@@ -164,8 +174,11 @@ may be reused, while conflicting or corrupted records fail. Checkpointed `.nc`
 files are never treated as immutable hash-verifiable outputs. Resume uses the
 native FELIS/OpenMMTools checkpoint and verifies its stored iteration target,
 replica mapping, checkpoint interval and finite coordinates after establishing
-that no scheduler job can still write it. It schedules only incomplete groups
-and dependent finalizers. A stale completion record or corrupt checkpoint is an
+that no scheduler job can still write it. An interrupted equilibration reuses
+validated assembly without running `makebox` again. Completed equilibration is
+retained when only production groups need restarting. Resume selects the
+incomplete preproduction chain, groups and finalizers with their dependencies.
+A stale completion record or corrupt checkpoint is an
 error; it is not silently regenerated. `resume --dry-run` leaves pending jobs
 untouched.
 
@@ -175,7 +188,8 @@ still exists, without reading or hashing it. Group records shown there are
 explicitly *unverified* until a quiescent probe. Shared solvent groups report
 their owner's completion records, even while the consuming calculation is still
 being prepared. Overall calculation state advances through preparation,
-sampling, recorded groups, and finalization.
+equilibration, sampling, recorded groups, and finalization. Interrupted
+equilibration and finalization are reported separately.
 
 Each `executions/<attempt>/` retains an immutable attempt/site snapshot and
 the canonical workflow stage graph identity. After the resume probe, its
@@ -188,6 +202,9 @@ current source diagnostics; checkout paths, interpreter paths, Git revision,
 and timestamps do not determine continuation compatibility. Continuation
 compares source hashes, package versions, and stable Python identity.
 
+The PR4 stage model is explicitly versioned in `science.json`. Pre-PR4 plans,
+including PR3 `prep.ok.json` markers representing the entire old preproduction
+chain, cannot be resumed or reclassified; plan a new run directory.
 Pre-PR3 terminal markers without this manifest schema cannot certify completed
 artifacts. They fail with an actionable legacy-artifact error instead of being
 automatically blessed. An unrecorded trajectory can receive a completion record
@@ -210,11 +227,13 @@ charges. The bundled OFFXML and its declared model hash are checked.
 | `smoke.yaml` | 0.1 ns; e05/v18 | 22/29 | 6/8 | 1 | Quick pipeline check |
 | `validation.yaml` | 1 ns; e05/v18 | 22/29 | 6/8 | 1 | Short end-to-end validation |
 | `full-ladder-validation.yaml` | 1 ns; e29/v45 | 73/80 | 25/30 | 1 | Check complete production ladder with short sampling |
-| `production.yaml` | 10 ns; e29/v45 | 73/80 | 25/30 | 3 | Starting production protocol |
+| `production.yaml` | 10 ns; e29/v45 | 73/80 | 25/30 | 3 | Independent 10 ns Boresch equilibration per calculation/replica |
 
-All use 3 ns of Boresch preparation, r02 restraints, 298.15 K and 2 fs steps.
+Smoke and both validation profiles use 3 ns of Boresch equilibration;
+production uses 10 ns (2000 iterations at 5 ps each) per calculation/replica.
+All use r02 restraints, 298.15 K and 2 fs steps.
 Durations are per state, not total GPU runtime; overlapping boundary states
-are simulated in adjacent groups. The 3 ns GPU preparation is still required
+are simulated in adjacent groups. The 3 ns GPU equilibration is still required
 for smoke and short validation; fewer ABFE states do not shorten it. The
 previous portable sucralose run planned with `validation.yaml` used the full
 73/80-state ladder; its frozen science settings do not change when this template
@@ -225,9 +244,10 @@ increase `solvent_ns`/`complex_ns` (e.g. 50 ns), choose a new name/seed, and pla
 new run. Set site walltimes from measured validation performance. A duration
 label does not establish convergence.
 
-`slurm.array_concurrency` limits **each** A or B array, not all GPUs in a
-campaign. For a single calculation, two arrays can use up to twice that number
-at once, subject to the scheduler's GPU quota; choose the site value deliberately.
+Production A/B sampling remains 10 ns per alchemical state across the 73/80
+ladder and 25/30 groups.
+Boresch equilibration occurs once per calculation/replica preproduction
+chain, not once per lambda state.
 
 ## Prepare a new receptor and ligands
 

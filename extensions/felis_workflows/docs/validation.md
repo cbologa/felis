@@ -91,7 +91,8 @@ in its own code; the numerical checks still run.
 For a sucralose/Sage run, record the frozen campaign, force-field and protocol
 from `science.json`; validate the receptor audit, ligand parameter validation,
 both assembled-leg atom masks and the `grompp_A.log`/`grompp_B.log` checks.
-Require `prep.ok.json`, every A and B trajectory at its stored iteration target,
+Require distinct `assembly.ok.json` and `equil.ok.json` manifests for every
+calculation/replica, every A and B trajectory at its stored iteration target,
 `finalized.json`, and an `analysis/report.json` with no missing calculation.
 Check the actual Slurm exit states and retry incomplete groups only after all
 previous trajectory writers stop. A Slurm completion state by itself does not

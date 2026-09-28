@@ -20,6 +20,4 @@ slurm:
   partition: CHANGE_ME_GPU_PARTITION
   analysis_partition: CHANGE_ME_CPU_PARTITION
   gpu_args: [--gres=gpu:1]
-  array_concurrency: 4
-  prep_concurrency: 1
   extra_args: [--requeue]

@@ -6,8 +6,8 @@ import subprocess
 
 from .backends import local, slurm
 from .backends.common import graph, incomplete_graph, launch, snapshot
-from .artifacts import (commit_manifest, global_dependencies, group_dependencies, group_state, paths,
-                        validate_final, validate_global, validate_preparation)
+from .artifacts import (ValidatedEquilibrationParents, commit_manifest, global_dependencies, group_state, paths,
+                        EQUIL_STAGES, validate_final, validate_global, validate_preparation)
 from .common import WorkflowError, digest, file_hashes, lock, read
 from .config import site_config
 from .integrity import verify_upstream
@@ -74,37 +74,58 @@ def status(root):
         validate_global(root, science)
     output = []
     preparation = {}
+    equilibration = {}
+    parents = ValidatedEquilibrationParents(root, science)
     for calc in science["calculations"]:
         directory = root / "calculations" / calc["key"]
+        if (directory / "prep.ok.json").exists():
+            raise WorkflowError(f"Legacy PR3 preproduction marker in {directory}; plan a new PR4 run")
         if paths(root, calc).exists():
-            validate_preparation(root, science, calc)
+            if paths(root, calc, "equil").exists():
+                parents.identity(calc)
+            else:
+                validate_preparation(root, science, calc)
             preparation[calc["key"]] = "complete"
         else:
             preparation[calc["key"]] = "partial" if directory.exists() else "not_started"
+        if paths(root, calc, "equil").exists():
+            if preparation[calc["key"]] != "complete":
+                raise WorkflowError(f"Equilibration without validated system preparation: {calc['key']}")
+            equilibration[calc["key"]] = "complete"
+        else:
+            work = workdir(root, calc)
+            started = any((work / "progress" / f"{stage}.done").is_file() for stage in EQUIL_STAGES)
+            started |= any((work / "trj" / name).is_file() for name in
+                           ("sysB_boresch_em.nc", "sysB_boresch_em.pdb", "sysB_boresch_npt.nc",
+                            "sysB_boresch_npt.dcd", "sysA_em.nc", "sysA_em.pdb",
+                            "sysB_boresch_filtered.nc", "sysB_em.nc", "sysB_em.pdb"))
+            if started and preparation[calc["key"]] != "complete":
+                raise WorkflowError(f"Partial equilibration without validated system preparation: {calc['key']}")
+            equilibration[calc["key"]] = "partial" if started else "not_started"
     dependencies_cache = {}
     for calc in science["calculations"]:
         directory = root / "calculations" / calc["key"]
         prep = preparation[calc["key"]]
+        equil = equilibration[calc["key"]]
         groups = {}
         for leg in "AB":
             entries = []
             owner = calculation(science, calc["solvent_owner"]) if leg == "A" else calc
             shared = owner["key"] != calc["key"]
-            owner_prep = preparation[owner["key"]]
-            dependencies = None
-            if owner_prep == "complete":
-                key = (owner["key"], leg)
-                if key not in dependencies_cache:
-                    dependencies_cache[key] = group_dependencies(root, science, calc, leg)
-                dependencies = dependencies_cache[key]
+            owner_equil = equilibration[owner["key"]]
             for unit in units(root, science, calc, leg):
-                if owner_prep == "complete":
-                    state = group_state(root, science, calc, leg, unit, dependencies=dependencies)
+                if owner_equil == "complete":
+                    key = (owner["key"], leg, unit["index"])
+                    if key not in dependencies_cache:
+                        dependencies_cache[key] = parents.dependencies(calc, leg, unit["index"])
+                    dependencies = dependencies_cache[key]
+                    state = group_state(root, science, calc, leg, unit, dependencies=dependencies,
+                                        runtime=parents.runtime)
                     group_status = "recorded_unverified" if state["complete"] else "incomplete"
                 else:
                     if paths(root, owner, leg, unit).exists():
-                        raise WorkflowError(f"Simulation record without validated system preparation: {paths(root, owner, leg, unit)}")
-                    group_status = "not_started" if owner_prep == "not_started" else "preparing"
+                        raise WorkflowError(f"Simulation record without validated equilibration: {paths(root, owner, leg, unit)}")
+                    group_status = "not_started" if owner_equil == "not_started" else "equilibrating"
                 entry = {"index": unit["index"], "state": group_status}
                 if shared:
                     entry["owner"] = owner["key"]
@@ -119,7 +140,7 @@ def status(root):
                             ("A_fe_table.tsv", "B_fe_table.tsv", "R_fe_table.tsv", "sys_abfe.tsv")]
         finalized = "not_started"
         if (directory / "finalized.json").exists():
-            validate_final(root, science, calc)
+            validate_final(root, science, calc, parents=parents)
             finalized = "complete"
         elif any(path.is_file() for path in partial_outputs):
             finalized = "partial"
@@ -133,14 +154,19 @@ def status(root):
             state = "preparing"
         elif prep == "not_started":
             state = "not_started"
+        elif equil == "partial":
+            state = "equilibrating"
+        elif equil == "not_started":
+            state = "prepared"
         elif completed == total:
             state = "ready_for_finalization"
         elif completed:
             state = "sampling"
         else:
-            state = "prepared"
+            state = "ready_for_sampling"
         output.append({"calculation": calc["key"], "state": state,
-                       "system_preparation": prep, "groups": groups, "finalization": finalized})
+                       "system_preparation": prep, "equilibration": equil,
+                       "groups": groups, "finalization": finalized})
     jobs = slurm.job_records(root)
     from .backends.common import prior_attempts
     attempts = []

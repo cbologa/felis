@@ -81,7 +81,7 @@ def test_stage_partitions_and_walltimes(cycle, site, tmp_path):
 
 def test_resume_only_missing_groups(cycle):
     _, science = cycle
-    status = {c["key"]: {"prep": True, "finalize": True,
+    status = {c["key"]: {"prep": True, "equil": True, "finalize": True,
               **{leg: [True] * len(science["ladders"][leg]["groups"]) for leg in "AB"}}
               for c in science["calculations"]}
     status["L_in_R/r1"]["A"][2] = False

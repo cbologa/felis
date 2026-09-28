@@ -8,7 +8,7 @@ timestep_fs: 2
 steps_per_iteration: 2500
 solvent_ns: 10.0
 complex_ns: 10.0
-equilibration_ns: 3.0
+equilibration_ns: 10.0
 checkpoint_interval: 50
 electrostatics: e29
 vdw: v45

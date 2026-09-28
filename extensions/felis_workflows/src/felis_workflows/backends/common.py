@@ -82,7 +82,7 @@ def graph(science):
     """Aggregate canonical simulation-unit stages into scheduler arrays."""
     stages = artifacts.stage_graph(science)
     def task_id(stage):
-        if stage["kind"] == "system_preparation":
+        if stage["kind"] in {"system_preparation", "equilibration"}:
             return "prep__" + stage["calculation"].replace("/", "__")
         if stage["kind"] == "simulation_group":
             return stage["leg"] + "__" + stage["calculation"].replace("/", "__")
@@ -96,7 +96,7 @@ def graph(science):
             continue  # Global input preparation is the separate CPU prepare command.
         task_id_value = task_id(stage)
         if task_id_value not in tasks:
-            kind = {"system_preparation": "prep", "simulation_group": "array",
+            kind = {"system_preparation": "prep", "equilibration": "prep", "simulation_group": "array",
                     "finalization": "finalize"}[stage["kind"]]
             task = {"id": task_id_value, "kind": kind, "calculation": stage["calculation"],
                     "dependencies": []}
@@ -109,7 +109,7 @@ def graph(science):
             if dependency["kind"] == "global_input":
                 continue
             parent = task_id(dependency)
-            if parent not in task["dependencies"]:
+            if parent != task_id_value and parent not in task["dependencies"]:
                 task["dependencies"].append(parent)
         if stage["kind"] == "simulation_group":
             task["indices"].append(stage["index"])
@@ -124,7 +124,9 @@ def incomplete_graph(science, status):
             task["indices"] = [i for i in task["indices"] if not entry[task["leg"]][i]]
             if not task["indices"]:
                 continue
-        elif entry[task["kind"]]:
+        elif task["kind"] == "prep" and entry["prep"] and entry["equil"]:
+            continue
+        elif task["kind"] != "prep" and entry[task["kind"]]:
             continue
         pending.append(task)
     ids = {t["id"] for t in pending}

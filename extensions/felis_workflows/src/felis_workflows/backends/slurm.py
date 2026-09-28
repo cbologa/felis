@@ -57,7 +57,7 @@ def submission_command(root, site, attempt, task, script, dependencies):
     if stage != "analysis":
         cmd.extend(slurm["gpu_args"])
     if task["kind"] == "array":
-        cmd.append("--array=" + ",".join(map(str, task["indices"])) + f"%{slurm['array_concurrency']}")
+        cmd.append("--array=" + ",".join(map(str, task["indices"])))
     if dependencies:
         cmd.append("--dependency=afterok:" + ":".join(dict.fromkeys(dependencies)))
     cmd.extend(slurm.get("extra_args", []))
@@ -66,8 +66,7 @@ def submission_command(root, site, attempt, task, script, dependencies):
 
 
 def submit(root, site, attempt, tasks, dry_run=False):
-    ids, jobs, prep_lanes = {}, [], [None] * site["slurm"]["prep_concurrency"]
-    prep_index = 0
+    ids, jobs = {}, []
     previews = []
     record_task_graph(attempt, tasks)
     write(attempt / "submission_plan.json", {"tasks": previews, "dry_run": dry_run})
@@ -81,11 +80,6 @@ def submit(root, site, attempt, tasks, dry_run=False):
         write_script(script, worker_script(root, site, attempt / "site.json", action, args,
                                           array=task["kind"] == "array"))
         dependencies = [ids[d] for d in task["dependencies"]]
-        lane = prep_index % len(prep_lanes)
-        if task["kind"] == "prep":
-            if prep_lanes[lane]:
-                dependencies.append(prep_lanes[lane])
-            prep_index += 1
         cmd = submission_command(root, site, attempt, task, script, dependencies)
         previews.append({"task": task, "argv": cmd, "dependencies": dependencies,
                          "script_sha256": sha256(script)})
@@ -103,7 +97,5 @@ def submit(root, site, attempt, tasks, dry_run=False):
             # Keep every successful submission visible if a later call fails.
             write(attempt / "jobs.json", {"jobs": jobs})
         ids[task["id"]] = jobid
-        if task["kind"] == "prep":
-            prep_lanes[lane] = jobid
     write(attempt / "submission_plan.json", {"tasks": previews, "dry_run": dry_run})
     return {"attempt": str(attempt), "jobs": jobs, "dry_run": dry_run, "task_count": len(tasks)}

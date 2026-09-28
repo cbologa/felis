@@ -20,6 +20,4 @@ slurm:
   partition: scavenger
   analysis_partition: general
   gpu_args: [--gpus=1]
-  array_concurrency: 8
-  prep_concurrency: 1
   extra_args: [--requeue]

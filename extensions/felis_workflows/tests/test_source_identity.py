@@ -222,7 +222,9 @@ def test_group_subprocess_uses_workdir_and_source_environment(cycle, site, monke
     calc = science["calculations"][0]
     work = workdir(root, calc)
     (work / "trj").mkdir(parents=True)
-    monkeypatch.setattr(worker, "check_prepared", lambda *args: None)
+    monkeypatch.setattr(worker, "check_equilibrated", lambda *args, **kwargs: None)
+    monkeypatch.setattr(worker, "ValidatedEquilibrationParents",
+                        lambda *args: types.SimpleNamespace(dependencies=lambda *a: {"equilibration": "verified", "group_seed": 1}))
     monkeypatch.setattr(worker, "allocation", lambda *args: nullcontext())
     state = iter([{"complete": False}, {"complete": True}])
     monkeypatch.setattr(worker, "group_state", lambda *args, **kwargs: next(state))

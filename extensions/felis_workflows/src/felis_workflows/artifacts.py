@@ -13,8 +13,9 @@ import tempfile
 from .common import WorkflowError, digest, read, sha256
 
 SCHEMA = 1
-PREP_STAGES = ("makebox", "boresch_em", "boresch_npt", "boresch_post_process", "sysA_em", "sysB_em")
-KINDS = {"global_inputs", "system_preparation", "simulation_group", "finalization"}
+PREP_STAGES = ("makebox",)
+EQUIL_STAGES = ("boresch_em", "boresch_npt", "boresch_post_process", "sysA_em", "sysB_em")
+KINDS = {"global_inputs", "system_preparation", "equilibration", "simulation_group", "finalization"}
 
 
 def compatibility(runtime):
@@ -113,6 +114,8 @@ def commit_manifest(path, root, science, kind, outputs, dependencies, runtime,
 def validate_manifest(path, root, science, kind, dependencies=None, runtime=None,
                       *, calculation=None, task=None):
     path = Path(path)
+    if not path.is_file():
+        raise WorkflowError(f"Missing {kind} terminal artifact: {path}")
     value = read(path)
     required = {"schema_version", "kind", "science_id", "calculation", "task", "producer",
                 "dependencies", "hashes", "runtime_compatibility", "source_diagnostics", "checkpoint"}
@@ -165,11 +168,24 @@ def prep_dependencies(root, science, calc):
     if stages[f"prep:{calc['key']}"]["dependencies"] != expected:
         raise WorkflowError(f"Invalid global preparation dependencies: {calc['key']}")
     validate_global(root, science)
-    return {"global_inputs": manifest_id(paths(root))}
+    return {"global_inputs": manifest_id(paths(root)), "preparation_seed": calc["prep_seed"]}
+
+
+def equil_dependencies(root, science, calc):
+    stage = stage_index(science)[f"equil:{calc['key']}"]
+    if stage["dependencies"] != [f"prep:{calc['key']}"]:
+        raise WorkflowError(f"Invalid equilibration dependencies: {calc['key']}")
+    validate_preparation(root, science, calc)
+    return {"system_preparation": manifest_id(paths(root, calc)),
+            "preparation_seed": calc["prep_seed"],
+            "equilibration_iterations": round(science["protocol"]["equilibration_ns"] / .005)}
 
 
 def validate_preparation(root, science, calc, runtime=None):
     from .planning import workdir
+    legacy = Path(root) / "calculations" / calc["key"] / "prep.ok.json"
+    if legacy.exists():
+        raise WorkflowError(f"Legacy PR3 preproduction marker {legacy}; plan a new PR4 run")
     path = paths(root, calc)
     value = validate_manifest(path, root, science, "system_preparation", prep_dependencies(root, science, calc),
                               runtime if runtime is not None else runtime_snapshot(root),
@@ -178,8 +194,7 @@ def validate_preparation(root, science, calc, runtime=None):
     required = {str((work / "prepare" / f"sys{leg}.{ext}").relative_to(root))
                 for leg in "AB" for ext in ("gro", "top")}
     required.update(str((work / "prepare" / f"sys{leg}_{suffix}").relative_to(root))
-                    for leg in "AB" for suffix in ("em.pdb", "atom_ids.json", "lam.json", "ab_ligatoms.json"))
-    required.add(str((work / "prepare/sys_boresch_cfg.json").relative_to(root)))
+                    for leg in "AB" for suffix in ("atom_ids.json", "ab_ligatoms.json", "posres.json"))
     directory = Path(root) / "calculations" / calc["key"]
     required.update(str((directory / name).relative_to(root)) for name in
                     ("abfecfg.json", "assembly_validation.json",
@@ -195,16 +210,56 @@ def validate_preparation(root, science, calc, runtime=None):
     return value
 
 
-def group_dependencies(root, science, calc, leg):
-    from .planning import calculation
-    owner = calculation(science, calc["solvent_owner"]) if leg == "A" else calc
-    stages = stage_index(science)
-    for index in range(len(science["ladders"][leg]["groups"])):
-        stage = stages[f"group:{owner['key']}:{leg}:{index}"]
-        if stage["dependencies"] != [f"prep:{owner['key']}"]:
-            raise WorkflowError(f"Invalid group preparation dependencies: {stage['id']}")
-    validate_preparation(root, science, owner, runtime_snapshot(root))
-    return {"system_preparation": manifest_id(paths(root, owner))}
+def validate_equilibration(root, science, calc, runtime=None):
+    from .planning import workdir
+    value = validate_manifest(paths(root, calc, "equil"), root, science, "equilibration",
+                              equil_dependencies(root, science, calc),
+                              runtime if runtime is not None else runtime_snapshot(root),
+                              calculation=calc["key"], task=f"equil:{calc['key']}")
+    work = workdir(root, calc)
+    required = {str((work / "prepare" / f"sys{leg}_{suffix}").relative_to(root))
+                for leg in "AB" for suffix in ("em.pdb", "lam.json")}
+    required.add(str((work / "prepare/sys_boresch_cfg.json").relative_to(root)))
+    if not required <= value["hashes"].keys():
+        raise WorkflowError(f"Equilibration lacks required production starts/configuration: {calc['key']}")
+    for stage in EQUIL_STAGES:
+        if not (work / "progress" / f"{stage}.done").is_file():
+            raise WorkflowError(f"Equilibration lacks FELIS stage {stage}: {calc['key']}")
+    return value
+
+
+class ValidatedEquilibrationParents:
+    """Cache verified terminal parent identities for one operation only."""
+
+    def __init__(self, root, science, runtime=None):
+        self.root, self.science, self.runtime = root, science, runtime
+        self._identities = {}
+        self._stages = stage_index(science)
+
+    def identity(self, calc, runtime=None):
+        if runtime is not None:
+            if self.runtime is not None and compatibility(self.runtime) != compatibility(runtime):
+                raise WorkflowError("Conflicting runtime identities for validated equilibration parents")
+            self.runtime = runtime
+        key = calc["key"]
+        if key not in self._identities:
+            if self.runtime is None:
+                self.runtime = runtime_snapshot(self.root)
+            validate_equilibration(self.root, self.science, calc, self.runtime)
+            self._identities[key] = manifest_id(paths(self.root, calc, "equil"))
+        return self._identities[key]
+
+    def dependencies(self, calc, leg, index):
+        from .planning import calculation
+        owner = calculation(self.science, calc["solvent_owner"]) if leg == "A" else calc
+        stage = self._stages[f"group:{owner['key']}:{leg}:{index}"]
+        if stage["dependencies"] != [f"equil:{owner['key']}"]:
+            raise WorkflowError(f"Invalid group equilibration dependencies: {stage['id']}")
+        return {"equilibration": self.identity(owner), "group_seed": owner["seeds"][leg][index]}
+
+
+def group_dependencies(root, science, calc, leg, index):
+    return ValidatedEquilibrationParents(root, science).dependencies(calc, leg, index)
 
 
 def runtime_snapshot(root):
@@ -222,7 +277,7 @@ def group_state(root, science, calc, leg, unit, *, semantic=False, producer=None
     owner = calculation(science, calc["solvent_owner"]) if leg == "A" else calc
     path = paths(root, owner, leg, unit)
     runtime = runtime if runtime is not None else runtime_snapshot(root)
-    dependencies = dependencies if dependencies is not None else group_dependencies(root, science, calc, leg)
+    dependencies = dependencies if dependencies is not None else group_dependencies(root, science, calc, leg, unit["index"])
     saved = None
     if path.exists():
         saved = validate_manifest(path, root, science, "simulation_group", dependencies, runtime,
@@ -266,20 +321,18 @@ def group_state(root, science, calc, leg, unit, *, semantic=False, producer=None
     return {**status, "verified": True}
 
 
-def final_dependencies(root, science, calc):
+def final_dependencies(root, science, calc, *, parents=None):
     from .planning import calculation, units
     records = {}
     stages = stage_index(science)
-    dependency_cache = {}
-    runtime = runtime_snapshot(root)
+    parents = parents if parents is not None else ValidatedEquilibrationParents(root, science)
     for name in stages[f"finalize:{calc['key']}"]["dependencies"]:
         stage = stages[name]
         leg, index = stage["leg"], stage["index"]
         owner = calculation(science, stage["calculation"])
         unit = units(root, science, calc, leg)[index]
-        if leg not in dependency_cache:
-            dependency_cache[leg] = group_dependencies(root, science, calc, leg)
-        group_state(root, science, calc, leg, unit, dependencies=dependency_cache[leg], runtime=runtime)
+        group_state(root, science, calc, leg, unit,
+                    dependencies=parents.dependencies(calc, leg, index), runtime=parents.runtime)
         path = paths(root, owner, leg, unit)
         if not path.exists():
             raise WorkflowError(f"Finalization needs a recorded simulation group: {path}")
@@ -287,9 +340,9 @@ def final_dependencies(root, science, calc):
     return records
 
 
-def validate_final(root, science, calc):
+def validate_final(root, science, calc, *, parents=None):
     value = validate_manifest(paths(root, calc, "final"), root, science, "finalization",
-                              final_dependencies(root, science, calc), runtime_snapshot(root),
+                              final_dependencies(root, science, calc, parents=parents), runtime_snapshot(root),
                               calculation=calc["key"], task=f"finalize:{calc['key']}")
     from .planning import workdir
     directory, analysis = Path(root) / "calculations" / calc["key"], workdir(root, calc) / "analysis"
@@ -309,7 +362,8 @@ def paths(root, calc=None, leg=None, unit=None):
     directory = root / "calculations" / calc["key"]
     if unit is not None:
         return directory / "completion" / f'{unit["stem"]}.json'
-    return directory / ("prep.ok.json" if leg is None else "finalized.json")
+    return directory / ("assembly.ok.json" if leg is None else
+                        "equil.ok.json" if leg == "equil" else "finalized.json")
 
 
 def stage_graph(science):
@@ -322,13 +376,15 @@ def stage_graph(science):
         key = calc["key"]
         stages.append({"id": f"prep:{key}", "kind": "system_preparation", "calculation": key,
                        "dependencies": global_ids})
+        stages.append({"id": f"equil:{key}", "kind": "equilibration", "calculation": key,
+                       "dependencies": [f"prep:{key}"]})
         for leg in "AB":
             if leg == "A" and calc["solvent_owner"] != key:
                 continue
             for index, _ in enumerate(science["ladders"][leg]["groups"]):
                 stages.append({"id": f"group:{key}:{leg}:{index}", "kind": "simulation_group",
                                "calculation": key, "leg": leg, "index": index,
-                               "dependencies": [f"prep:{key}"]})
+                               "dependencies": [f"equil:{key}"]})
     for calc in science["calculations"]:
         deps = [f"group:{calc['solvent_owner']}:A:{i}"
                 for i in range(len(science["ladders"]["A"]["groups"]))]

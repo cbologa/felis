@@ -9,9 +9,9 @@ import shutil
 import subprocess
 import sys
 
-from .artifacts import (PREP_STAGES, commit_manifest, final_dependencies, group_state,
-                        paths, prep_dependencies, validate_final,
-                        validate_preparation, write_once)
+from .artifacts import (EQUIL_STAGES, PREP_STAGES, ValidatedEquilibrationParents, commit_manifest, equil_dependencies,
+                        final_dependencies, group_state, paths, prep_dependencies, validate_equilibration,
+                        validate_final, validate_preparation, write_once)
 from .common import WorkflowError, digest, lock, read, sha256, write
 from .planning import abfe_config, calculation, load_run, units, workdir
 from .runtime import activate_source, allocation, check_runtime, mpi_command, source_environment, stages
@@ -26,13 +26,24 @@ def check_prepared(root, science, calc, site):
     return current_runtime
 
 
+def check_equilibrated(root, science, calc, site, *, parents=None):
+    current_runtime = check_runtime(root, site)
+    if parents is None:
+        validate_equilibration(root, science, calc, current_runtime)
+    else:
+        parents.identity(calc, current_runtime)
+    return current_runtime
+
+
 def prepare_system(root, science, calc, site):
     from .validation import validate_assembled
     directory = calcdir(root, calc)
     directory.mkdir(parents=True, exist_ok=True)
     with lock(directory / "prep.lock"):
         if (directory / "prep.ok.json").exists():
-            check_prepared(root, science, calc, site)
+            raise WorkflowError("Legacy PR3 preproduction marker; plan a new PR4 run")
+        if paths(root, calc, "equil").exists():
+            check_equilibrated(root, science, calc, site)
             return
         anchor = directory / "location.json"
         if anchor.exists() and not (root / "runtime.json").is_file():
@@ -43,79 +54,102 @@ def prepare_system(root, science, calc, site):
             raise WorkflowError("A partial FELIS preparation moved or changed scientific settings")
         write_once(anchor, current)
         input_dir = directory / "input"
-        input_dir.mkdir(exist_ok=True)
-        # FELIS identifies the work directory by the target SDF stem.
-        for suffix in ["sdf", "itp"]:
-            shutil.copyfile(root / "parameters" / calc["target"] / f"ligand.{suffix}",
-                            input_dir / f'{calc["target"]}.{suffix}')
-        cfg = abfe_config(root, science, calc)
-        cfg["sdffile"] = str(input_dir / f'{calc["target"]}.sdf')
-        cfg["itpfile"] = str(input_dir / f'{calc["target"]}.itp')
         config = directory / "abfecfg.json"
-        write(config, cfg)
         work = workdir(root, calc)
         with allocation(site):
-            stages(config, ["makebox"], site, calc["prep_seed"], work)
-            write(directory / "assembly_validation.json", validate_assembled(root, science, calc))
-            gmx = shutil.which("gmx")
-            if not gmx:
-                raise WorkflowError("gmx is required for full-system topology validation")
+            if not paths(root, calc).exists():
+                input_dir.mkdir(exist_ok=True)
+                # FELIS identifies the work directory by the target SDF stem.
+                for suffix in ("sdf", "itp"):
+                    source = root / "parameters" / calc["target"] / f"ligand.{suffix}"
+                    destination = input_dir / f'{calc["target"]}.{suffix}'
+                    if destination.exists():
+                        if sha256(destination) != sha256(source):
+                            raise WorkflowError(f"Conflicting partial preparation input: {destination}")
+                    else:
+                        shutil.copyfile(source, destination)
+                cfg = abfe_config(root, science, calc)
+                cfg["sdffile"] = str(input_dir / f'{calc["target"]}.sdf')
+                cfg["itpfile"] = str(input_dir / f'{calc["target"]}.itp')
+                write_once(config, cfg)
+                stages(config, list(PREP_STAGES), site, calc["prep_seed"], work)
+                if not (work / "progress/makebox.done").is_file():
+                    raise WorkflowError("Incomplete system assembly: makebox")
+                write_once(directory / "assembly_validation.json", validate_assembled(root, science, calc))
+                gmx = shutil.which("gmx")
+                if not gmx:
+                    raise WorkflowError("gmx is required for full-system topology validation")
+                for leg in "AB":
+                    with (directory / f"grompp_{leg}.log").open("w") as log:
+                        subprocess.run([gmx, "grompp", "-f", str(Path(__file__).parent / "data/grompp_check.mdp"),
+                                        "-c", str(work / f"prepare/sys{leg}.gro"), "-p", str(work / f"prepare/sys{leg}.top"),
+                                        "-o", str(directory / f"grompp_{leg}.tpr"), "-po", str(directory / f"grompp_{leg}.mdp")],
+                                       cwd=directory, stdout=log, stderr=subprocess.STDOUT, check=True)
+                files = [config, directory / "assembly_validation.json",
+                         *(input_dir / f'{calc["target"]}.{suffix}' for suffix in ("sdf", "itp")),
+                         *(work / "prepare" / f"sys{leg}.{ext}" for leg in "AB" for ext in ("gro", "top")),
+                         *(work / "prepare" / f"sys{leg}_{suffix}" for leg in "AB"
+                           for suffix in ("atom_ids.json", "ab_ligatoms.json", "posres.json"))]
+                commit_manifest(paths(root, calc), root, science, "system_preparation", files,
+                                prep_dependencies(root, science, calc), runtime,
+                                site.get("_attempt_id", "direct"), calculation=calc["key"], task=f"prep:{calc['key']}")
+            validate_preparation(root, science, calc, runtime)
+            stages(config, list(EQUIL_STAGES), site, calc["prep_seed"], work)
+            for stage in EQUIL_STAGES:
+                if not (work / "progress" / f"{stage}.done").is_file():
+                    raise WorkflowError(f"Incomplete equilibration: {stage}")
             for leg in "AB":
-                with (directory / f"grompp_{leg}.log").open("w") as log:
-                    subprocess.run([gmx, "grompp", "-f", str(Path(__file__).parent / "data/grompp_check.mdp"),
-                                    "-c", str(work / f"prepare/sys{leg}.gro"), "-p", str(work / f"prepare/sys{leg}.top"),
-                                    "-o", str(directory / f"grompp_{leg}.tpr"), "-po", str(directory / f"grompp_{leg}.mdp")],
-                                   cwd=directory, stdout=log, stderr=subprocess.STDOUT, check=True)
-            stages(config, PREP_STAGES[1:], site, calc["prep_seed"], work)
-        for stage in PREP_STAGES:
-            if not (work / "progress" / f"{stage}.done").exists():
-                raise WorkflowError(f"Incomplete preparation: {stage}")
-        for leg in "AB":
-            write(work / f"prepare/sys{leg}_lam.json", {"ab": {"lam_list": science["ladders"][leg]["lambdas"]}})
-        files = [*input_dir.rglob("*"), *list((work / "prepare").rglob("*")), config,
-                 directory / "assembly_validation.json"]
-        commit_manifest(paths(root, calc), root, science, "system_preparation",
-                        [p for p in files if p.is_file()], prep_dependencies(root, science, calc), runtime,
-                        site.get("_attempt_id", "direct"), calculation=calc["key"], task=f"prep:{calc['key']}")
-        validate_preparation(root, science, calc, runtime)
+                write_once(work / f"prepare/sys{leg}_lam.json", {"ab": {"lam_list": science["ladders"][leg]["lambdas"]}})
+            files = [*(work / "prepare" / f"sys{leg}_{suffix}" for leg in "AB"
+                       for suffix in ("em.pdb", "lam.json")), work / "prepare/sys_boresch_cfg.json"]
+            commit_manifest(paths(root, calc, "equil"), root, science, "equilibration", files,
+                            equil_dependencies(root, science, calc), runtime,
+                            site.get("_attempt_id", "direct"), calculation=calc["key"], task=f"equil:{calc['key']}")
+            validate_equilibration(root, science, calc, runtime)
 
 
 def simulate_group(root, science, calc, site, leg, index):
     if leg == "A" and calc["solvent_owner"] != calc["key"]:
         raise WorkflowError("A shared solvent calculation must be run through its owner")
-    producer_runtime = check_prepared(root, science, calc, site)
+    parents = ValidatedEquilibrationParents(root, science)
+    producer_runtime = check_equilibrated(root, science, calc, site, parents=parents)
+    dependencies = parents.dependencies(calc, leg, index)
     item = units(root, science, calc, leg)[index]
     work = workdir(root, calc)
     if site["mpi"]["ranks"] * len(item["ilam"]) > 48:
         raise WorkflowError("MPI ranks times states exceed the pinned FELIS context limit; reduce site MPI ranks")
     with lock(work / "trj" / f'{item["stem"]}.lock'):
         status = group_state(root, science, calc, leg, item, semantic=True,
-                             producer=site.get("_attempt_id", "direct"), producer_runtime=producer_runtime)
+                             producer=site.get("_attempt_id", "direct"), producer_runtime=producer_runtime,
+                             dependencies=dependencies, runtime=producer_runtime)
         if status["complete"]:
             return
         with allocation(site):
             subprocess.run(mpi_command(site, item["argv"]), cwd=work,
                            env=source_environment(site), check=True)
         status = group_state(root, science, calc, leg, item, semantic=True,
-                             producer=site.get("_attempt_id", "direct"), producer_runtime=producer_runtime)
+                             producer=site.get("_attempt_id", "direct"), producer_runtime=producer_runtime,
+                             dependencies=dependencies, runtime=producer_runtime)
         if not status["complete"]:
             raise WorkflowError(f"Simulation stopped before its iteration target: {status}")
 
 
 def finalize(root, science, calc, site):
     from .validation import partner_occupancy
-    producer_runtime = check_prepared(root, science, calc, site)
+    parents = ValidatedEquilibrationParents(root, science)
+    producer_runtime = check_equilibrated(root, science, calc, site, parents=parents)
     directory, work = calcdir(root, calc), workdir(root, calc)
     with lock(directory / "analysis.lock"):
         owner = calculation(science, calc["solvent_owner"])
-        check_prepared(root, science, owner, site)
+        parents.identity(owner)
         reports = [group_state(root, science, calc, leg, item, semantic=True,
-                               producer=site.get("_attempt_id", "direct"), producer_runtime=producer_runtime)
+                               producer=site.get("_attempt_id", "direct"), producer_runtime=producer_runtime,
+                               dependencies=parents.dependencies(calc, leg, item["index"]), runtime=producer_runtime)
                    for leg in "AB" for item in units(root, science, calc, leg)]
         if not all(v["complete"] for v in reports):
             raise WorkflowError("Finalization requires every group to reach its iteration target")
         if (directory / "finalized.json").exists():
-            validate_final(root, science, calc)
+            validate_final(root, science, calc, parents=parents)
             return
         write(directory / "completion_audit.json", {"groups": reports})
         occupancy = partner_occupancy(root, science, calc)
@@ -150,28 +184,41 @@ def finalize(root, science, calc, site):
         files = [analysis / name for name in ["A_fe_table.tsv", "B_fe_table.tsv", "R_fe_table.tsv", "sys_abfe.tsv"]]
         files += [directory / "result.json", directory / "completion_audit.json", directory / "partner_occupancy.json"]
         commit_manifest(paths(root, calc, "final"), root, science, "finalization", files,
-                        final_dependencies(root, science, calc), producer_runtime,
+                        final_dependencies(root, science, calc, parents=parents), producer_runtime,
                         site.get("_attempt_id", "direct"), calculation=calc["key"],
                         task=f"finalize:{calc['key']}")
 
 
 def probe(root, science, site, destination):
     output = {}
+    producer_runtime = check_runtime(root, site)
+    parents = ValidatedEquilibrationParents(root, science, producer_runtime)
     for calc in science["calculations"]:
         directory = calcdir(root, calc)
-        done = paths(root, calc).exists()
-        if done:
-            producer_runtime = check_prepared(root, science, calc, site)
-        entry = {"prep": done, "A": [], "B": [], "finalize": False}
+        if (directory / "prep.ok.json").exists():
+            raise WorkflowError(f"Legacy PR3 preproduction marker in {directory}; plan a new PR4 run")
+        prepared = paths(root, calc).exists()
+        equilibrated = paths(root, calc, "equil").exists()
+        if equilibrated and not prepared:
+            raise WorkflowError(f"Equilibration without system preparation: {calc['key']}")
+        if equilibrated:
+            parents.identity(calc)
+        elif prepared:
+            validate_preparation(root, science, calc, producer_runtime)
+        entry = {"prep": prepared, "equil": equilibrated, "A": [], "B": [], "finalize": False}
         for leg in "AB":
+            owner = calculation(science, calc["solvent_owner"]) if leg == "A" else calc
+            owner_equilibrated = paths(root, owner, "equil").exists()
             for item in units(root, science, calc, leg):
-                if not done and paths(root, calc, leg, item).exists():
-                    raise WorkflowError(f"Simulation record without validated system preparation: {paths(root, calc, leg, item)}")
+                if not owner_equilibrated and paths(root, owner, leg, item).exists():
+                    raise WorkflowError(f"Simulation record without validated equilibration: {paths(root, owner, leg, item)}")
                 entry[leg].append(group_state(root, science, calc, leg, item, semantic=True,
                                               producer=site.get("_attempt_id", "direct"),
-                                              producer_runtime=producer_runtime)["complete"] if done else False)
+                                              producer_runtime=producer_runtime,
+                                              dependencies=parents.dependencies(calc, leg, item["index"]),
+                                              runtime=producer_runtime)["complete"] if owner_equilibrated else False)
         if (directory / "finalized.json").exists():
-            validate_final(root, science, calc)
+            validate_final(root, science, calc, parents=parents)
             entry["finalize"] = True
         output[calc["key"]] = entry
     write(destination, output)

@@ -125,7 +125,8 @@ def plan(campaign, forcefield, protocol, output, repo=None):
                            for i in range(len(ladder[leg]["groups"]))] for leg in "AB"}
             calculations.append({**calc, "key": key, "replica": replica, "solvent_owner": owner,
                                  "seeds": seeds, "prep_seed": seed_for(p["seed"], key, "prep")})
-    value = {"schema_version": 1, "workflow_version": __version__, "upstream_commit": UPSTREAM_COMMIT,
+    value = {"schema_version": 1, "stage_model_version": 2,
+             "workflow_version": __version__, "upstream_commit": UPSTREAM_COMMIT,
              "campaign": c, "forcefield": f, "protocol": p, "ladders": ladder, "calculations": calculations,
              "input_hashes": file_hashes(root, ["inputs"])}
     write(root / "science.json", value)
@@ -140,6 +141,8 @@ def load_run(root, prepared=False):
     if sha256(root / "science.json") != read(root / "science.lock.json")["sha256"]:
         raise WorkflowError("Scientific manifest changed; create a new plan")
     s = read(root / "science.json")
+    if s.get("stage_model_version") != 2:
+        raise WorkflowError("Pre-PR4 stage model cannot be resumed or reclassified; plan a new run directory")
     if s["upstream_commit"] != UPSTREAM_COMMIT or s["workflow_version"] != __version__:
         raise WorkflowError("Workflow/upstream version mismatch")
     verify_hashes(root, s["input_hashes"])

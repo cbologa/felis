@@ -54,11 +54,11 @@ def global_ready(root, science, runtime):
                               artifacts.global_dependencies(science), runtime, "test:prepare")
 
 
-def system_ready(root, science, runtime, calc=None):
+def system_ready(root, science, runtime, calc=None, *, equilibrated=True):
     calc = calc or science["calculations"][0]
     directory, work = root / "calculations" / calc["key"], workdir(root, calc)
     work.joinpath("prepare").mkdir(parents=True)
-    for stage in artifacts.PREP_STAGES:
+    for stage in (*artifacts.PREP_STAGES, *(artifacts.EQUIL_STAGES if equilibrated else ())):
         marker = work / "progress" / f"{stage}.done"
         marker.parent.mkdir(exist_ok=True)
         marker.touch()
@@ -68,13 +68,10 @@ def system_ready(root, science, runtime, calc=None):
             path = work / "prepare" / f"sys{leg}.{ext}"
             path.write_text(f"{leg}.{ext}")
             outputs.append(path)
-        for suffix in ("em.pdb", "atom_ids.json", "lam.json", "ab_ligatoms.json"):
+        for suffix in ("atom_ids.json", "ab_ligatoms.json", "posres.json"):
             path = work / "prepare" / f"sys{leg}_{suffix}"
             path.write_text(f"{leg}_{suffix}")
             outputs.append(path)
-    boresch = work / "prepare/sys_boresch_cfg.json"
-    boresch.write_text("{}")
-    outputs.append(boresch)
     for name in ("abfecfg.json", "assembly_validation.json",
                  f'input/{calc["target"]}.sdf', f'input/{calc["target"]}.itp'):
         path = directory / name
@@ -86,6 +83,19 @@ def system_ready(root, science, runtime, calc=None):
     artifacts.commit_manifest(artifacts.paths(root, calc), root, science, "system_preparation", outputs,
                               artifacts.prep_dependencies(root, science, calc), runtime,
                               "test:prep", calculation=calc["key"], task=f"prep:{calc['key']}")
+    if equilibrated:
+        outputs = []
+        for leg in "AB":
+            for suffix in ("em.pdb", "lam.json"):
+                path = work / "prepare" / f"sys{leg}_{suffix}"
+                path.write_text(f"{leg}_{suffix}")
+                outputs.append(path)
+        boresch = work / "prepare/sys_boresch_cfg.json"
+        boresch.write_text("{}")
+        outputs.append(boresch)
+        artifacts.commit_manifest(artifacts.paths(root, calc, "equil"), root, science, "equilibration", outputs,
+                                  artifacts.equil_dependencies(root, science, calc), runtime,
+                                  "test:equil", calculation=calc["key"], task=f"equil:{calc['key']}")
     return calc
 
 
@@ -208,6 +218,8 @@ def test_group_records_restart_only_incomplete_and_detect_stale(small_run, runti
     complete = {("A", 0), ("B", 0)}
     monkeypatch.setattr(validation, "iteration_status", fake_iterations(root, science, calc, complete))
     monkeypatch.setattr(worker, "check_prepared", lambda *args: runtime_value)
+    monkeypatch.setattr(worker, "check_equilibrated", lambda *args: runtime_value)
+    monkeypatch.setattr(worker, "check_runtime", lambda *args: runtime_value)
     probe_path = root / "probe.json"
     worker.probe(root, science, {"_attempt_id": "resume-1"}, probe_path)
     state = read(probe_path)
@@ -327,9 +339,10 @@ def test_orphaned_and_malformed_group_records_are_not_accepted(small_run, runtim
             "checkpoint_interval": unit["checkpoint_interval"], "last_iteration": unit["iterations"],
             "last_checkpoint": unit["iterations"]}})
     artifacts.paths(root, calc).unlink()
-    with pytest.raises(WorkflowError, match="without validated system preparation"):
+    with pytest.raises(WorkflowError, match="Equilibration without validated system preparation"):
         orchestration.status(root)
-    with pytest.raises(WorkflowError, match="without validated system preparation"):
+    monkeypatch.setattr(worker, "check_runtime", lambda *args: runtime_value)
+    with pytest.raises(WorkflowError, match="Equilibration without system preparation"):
         worker.probe(root, science, {"_attempt_id": "attempt"}, root / "probe.json")
 
 
@@ -362,7 +375,7 @@ def test_final_manifest_and_status_never_read_trajectory(small_run, runtime_valu
                               artifacts.final_dependencies(root, science, calc), runtime_value,
                               "attempt", calculation=calc["key"], task=f"finalize:{calc['key']}")
     assert artifacts.validate_final(root, science, calc)
-    monkeypatch.setattr(worker, "check_prepared", lambda *a: runtime_value)
+    monkeypatch.setattr(worker, "check_runtime", lambda *a: runtime_value)
     worker.finalize(root, science, calc, {"_attempt_id": "reused"})
     monkeypatch.setattr(validation, "iteration_status", lambda *a, **kw: pytest.fail("status opened NetCDF"))
     before = {str(p) for p in root.rglob("*")}
@@ -381,7 +394,7 @@ def test_overall_status_tracks_sampling_and_finalization(small_run, runtime_valu
     import felis_workflows.validation as validation
     complete = {("A", 0), ("A", 1), ("B", 0)}
     monkeypatch.setattr(validation, "iteration_status", fake_iterations(root, science, calc, complete))
-    assert orchestration.status(root)["calculations"][0]["state"] == "prepared"
+    assert orchestration.status(root)["calculations"][0]["state"] == "ready_for_sampling"
     for leg, index in sorted(complete):
         unit = make_trajectory(root, science, calc, leg, index)
         artifacts.group_state(root, science, calc, leg, unit, semantic=True,
@@ -504,6 +517,8 @@ def test_resume_dry_run_uses_validated_groups_and_blocks_active_writer(small_run
         return original(*args)
     monkeypatch.setattr(validation, "iteration_status", reporter)
     monkeypatch.setattr(worker, "check_prepared", lambda *a: runtime_value)
+    monkeypatch.setattr(worker, "check_equilibrated", lambda *a: runtime_value)
+    monkeypatch.setattr(worker, "check_runtime", lambda *a: runtime_value)
     monkeypatch.setattr(orchestration, "activate_source", lambda _: None)
     monkeypatch.setattr(backend_common, "fingerprint", lambda _: runtime_value)
     calls = []

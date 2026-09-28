@@ -144,15 +144,13 @@ def site_config(path):
             raise WorkflowError("Memory and walltime must be nonempty strings")
     if s["backend"] == "slurm":
         t = s.get("slurm")
-        keys(t, {"account", "partition", "prep_partition", "analysis_partition", "gpu_args", "array_concurrency", "prep_concurrency", "extra_args"},
-             {"partition", "analysis_partition", "gpu_args", "array_concurrency", "prep_concurrency"}, "slurm")
+        keys(t, {"account", "partition", "prep_partition", "analysis_partition", "gpu_args", "extra_args"},
+             {"partition", "analysis_partition", "gpu_args"}, "slurm")
         for k in ("partition", "analysis_partition", "prep_partition"):
             if k == "prep_partition" and k not in t:
                 continue
             if not t[k] or "CHANGE_ME" in t[k]:
                 raise WorkflowError(f"Set slurm.{k} to a partition you can use")
-        for k in ("array_concurrency", "prep_concurrency"):
-            positive_int(t[k], k)
         if len(t["gpu_args"]) != 1 or not re.fullmatch(r"(?:--gpus=(?:[A-Za-z0-9_-]+:)?1|--gres=gpu:(?:[A-Za-z0-9_-]+:)?1)", t["gpu_args"][0]):
             raise WorkflowError("gpu_args must explicitly request one GPU with --gpus= or --gres=")
         for arg in t.get("extra_args", []):

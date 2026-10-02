@@ -87,7 +87,10 @@ def test_pr4_runtime_and_load_remain_compatible(cycle, site, repo):
     assert check_runtime(root, read(site))["source_hashes"] == before["source_hashes"]
     assert load_run(root) == science
     assert all("felis_endpoint" not in name for name in before["source_hashes"])
-    subprocess.run(["git", "diff", "--quiet", "d0bddaef0d9543f5ff831f4fe24ecc0e112c9133", "--",
+    # Check the reviewed PR5 change itself, rather than forbidding every later
+    # intentional workflow fix. The runtime/load assertions above remain live.
+    subprocess.run(["git", "diff", "--quiet", "d0bddaef0d9543f5ff831f4fe24ecc0e112c9133",
+                    "09e158ba0b1474417c76505b899cdf99127bcead", "--",
                     "extensions/felis_workflows/src"], cwd=repo, check=True)
 
 

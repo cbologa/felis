@@ -16,6 +16,7 @@ from felis_workflows.common import WorkflowError, read, write
 from felis_workflows.orchestration import doctor
 from felis_workflows.planning import default_repo, workdir
 from felis_workflows import runtime, worker
+from test_artifacts_restart import runtime_value
 
 
 def test_configured_source_and_path_safe_environment(repo, site, monkeypatch):
@@ -217,12 +218,12 @@ print('FELIS_CPU_STEP_OK', simulation.currentStep)
     assert right.stdout.strip() == "FELIS_CPU_STEP_OK 1"
 
 
-def test_group_subprocess_uses_workdir_and_source_environment(cycle, site, monkeypatch):
+def test_group_subprocess_uses_workdir_and_source_environment(cycle, site, runtime_value, monkeypatch):
     root, science = cycle
     calc = science["calculations"][0]
     work = workdir(root, calc)
     (work / "trj").mkdir(parents=True)
-    monkeypatch.setattr(worker, "check_equilibrated", lambda *args, **kwargs: None)
+    monkeypatch.setattr(worker, "check_equilibrated", lambda *args, **kwargs: runtime_value)
     monkeypatch.setattr(worker, "ValidatedEquilibrationParents",
                         lambda *args: types.SimpleNamespace(dependencies=lambda *a: {"equilibration": "verified", "group_seed": 1}))
     monkeypatch.setattr(worker, "allocation", lambda *args: nullcontext())
@@ -231,6 +232,7 @@ def test_group_subprocess_uses_workdir_and_source_environment(cycle, site, monke
     calls = []
     monkeypatch.setattr(worker.subprocess, "run", lambda argv, **kw: calls.append((argv, kw)))
     worker.simulate_group(root, science, calc, read(site), "A", 0)
+    assert "felis_workflows.repex" in calls[0][0]
     assert calls[0][1]["cwd"] == work
     assert calls[0][1]["env"]["FELIS_REPO"] == read(site)["repo"]
     assert calls[0][1]["env"]["PYTHONPATH"].split(os.pathsep)[:2] == [

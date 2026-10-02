@@ -365,6 +365,30 @@ use `resume` after inspecting job state. Corrupt files are not deleted or silent
 restarted. Partial receptor preparation requires inspection and moving the
 partial directory aside before retrying.
 
+New production groups record an immutable initialization intent before the
+native sampler can create NetCDF files. A separate ready record, bound to that
+intent and the native creation marker, is committed before any MPI rank starts
+production. These records contain the science, group, seed/equilibration and
+runtime identities; they are not simulation-completion manifests.
+
+If preemption interrupts initialization before the creation marker is written,
+the worker preserves the uncommitted trajectory/checkpoint files in
+`calculations/<calculation>/initialization/<stem>/<id>/` and retries from the
+validated equilibrated start. The quiescent resume probe only reports that group
+as incomplete; it does not move files. If the marker was written but readiness
+was not committed, the worker restores the initialized iteration-zero sampler.
+A marked trajectory is never passed to the native NetCDF-error delete/recreate
+fallback: restoration errors preserve all existing files and stop the task.
+Ready groups still require semantic checkpoint validation, and completion still
+requires the exact iteration target and a simulation-group manifest.
+
+Existing PR4/PR5 marked trajectories retain their artifact format. An unmarked
+trajectory with no initialization intent is still rejected; this protocol does
+not fabricate provenance for existing orphaned campaign data. The existing
+runtime source-fingerprint checks remain enforced. Installing this patch is
+not authorization to resume an older live run with changed executable sources;
+any such upgrade/recovery needs a separate reviewed compatibility plan.
+
 Resume on the same site/backend, with the original run path and compatible
 runtime. Portability means a campaign can be started on another configured
 site; arbitrary live checkpoint migration across GPU/MPI/runtime versions is

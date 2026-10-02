@@ -298,10 +298,17 @@ def group_state(root, science, calc, leg, unit, *, semantic=False, producer=None
         marker = str(Path(trajectory).with_suffix(".create_done"))
         if set(saved["hashes"]) != {marker}:
             raise WorkflowError(f"Simulation record lacks its FELIS creation marker: {path}")
+    from .initialization import state as initialization_state
+    initialization = initialization_state(root, science, calc, leg, unit, dependencies, runtime)
     if not semantic:
         return {"complete": saved is not None, "verified": False,
                 "reason": "recorded; trajectory inspection deferred" if saved else "no terminal record"}
+    if saved is None and initialization == "pending":
+        return {"complete": False, "verified": True, "stem": unit["stem"],
+                "reason": "interrupted group initialization; production has not started"}
     status = iteration_status(root, science, calc, leg, unit, reporter_factory)
+    if initialization == "created" and status["last_iteration"] != 0:
+        raise WorkflowError("Group sampled before its initialization ready record was committed")
     if saved and (not status["complete"] or
                   status["last_iteration"] != saved["checkpoint"]["last_iteration"] or
                   status["last_checkpoint"] < saved["checkpoint"]["last_checkpoint"]):

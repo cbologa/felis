@@ -124,8 +124,13 @@ def simulate_group(root, science, calc, site, leg, index):
                              dependencies=dependencies, runtime=producer_runtime)
         if status["complete"]:
             return
+        from .initialization import begin
+        begin(root, science, calc, leg, item, dependencies, producer_runtime,
+              site.get("_attempt_id", "direct"))
         with allocation(site):
-            subprocess.run(mpi_command(site, item["argv"]), cwd=work,
+            command = ["-m", "felis_workflows.repex", "--run", str(root),
+                       "--calculation", calc["key"], "--leg", leg, "--index", str(index)]
+            subprocess.run(mpi_command(site, command), cwd=work,
                            env=source_environment(site), check=True)
         status = group_state(root, science, calc, leg, item, semantic=True,
                              producer=site.get("_attempt_id", "direct"), producer_runtime=producer_runtime,

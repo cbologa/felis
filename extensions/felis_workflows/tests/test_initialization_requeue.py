@@ -6,8 +6,9 @@ import logging
 import os
 from pathlib import Path
 import subprocess
+import sys
 import threading
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -15,7 +16,7 @@ from felis_workflows import artifacts, initialization, orchestration, repex, wor
 from felis_workflows.backends import common
 from felis_workflows.common import WorkflowError, read, sha256, write
 from felis_workflows.config import site_config
-from felis_workflows.planning import units
+from felis_workflows.planning import units, workdir
 from felis_workflows.validation import iteration_status
 from test_artifacts_restart import global_ready, runtime_value, system_ready
 
@@ -209,7 +210,7 @@ def test_marker_written_but_ready_interrupted_is_restored_not_recreated(group, m
 def ready_files(group):
     begin(group)
     nc = storage(group)
-    nc.parent.mkdir(parents=True)
+    nc.parent.mkdir(parents=True, exist_ok=True)
     nc.write_bytes(b"valid checkpointed trajectory")
     checkpoint = nc.with_name(nc.stem + "_checkpoint.nc")
     checkpoint.write_bytes(b"valid checkpoint")
@@ -460,11 +461,170 @@ def test_shared_solvent_uses_owner_intent_and_rejects_wrong_replica(cycle, runti
     dependencies = {"equilibration": "owner equilibration", "group_seed": owner["seeds"]["A"][0]}
     group = (root, science, owner, "A", unit, dependencies, runtime_value)
     begin(group)
-    assert initialization.state(root, science, consumer, "A", unit, dependencies, runtime_value) == "pending"
+    consumer_unit = units(root, science, consumer, "A")[0]
+    assert consumer_unit != unit and consumer["seeds"]["A"] == owner["seeds"]["A"]
+    assert initialization.state(root, science, consumer, "A", consumer_unit, dependencies, runtime_value) == "pending"
     destination = initialization.locations(root, science, other, "A", units(root, science, other, "A")[0])[1]
     write(destination, read(initialization.locations(*group[:5])[1]))
     with pytest.raises(WorkflowError, match="initialization identity mismatch"):
         initialization.state(root, science, other, "A", units(root, science, other, "A")[0], dependencies, runtime_value)
+
+
+@pytest.fixture
+def shared_solvent_run(cycle, runtime_value, monkeypatch):
+    root, original = cycle
+    science = deepcopy(original)
+    science["calculations"] = [c for c in science["calculations"]
+                               if c["key"] in {"L_in_R/r1", "L_in_RP/r1"}]
+    owner, consumer = science["calculations"]
+    assert science["protocol"]["reuse_solvent"] is True
+    assert consumer["solvent_owner"] == owner["key"]
+    for leg, count in (("A", 2), ("B", 1)):
+        science["ladders"][leg]["groups"] = science["ladders"][leg]["groups"][:count]
+        for calc in science["calculations"]:
+            calc["seeds"][leg] = calc["seeds"][leg][:count]
+    write(root / "science.json", science)
+    write(root / "science.lock.json", {"sha256": sha256(root / "science.json")})
+    global_ready(root, science, runtime_value)
+    for calc in (owner, consumer):
+        system_ready(root, science, runtime_value, calc)
+    monkeypatch.setattr(worker, "check_runtime", lambda *a: runtime_value)
+    return root, science, owner, consumer, runtime_value
+
+
+@pytest.mark.parametrize("wrong", ("seed", "ilam", "iterations", "checkpoint_interval"))
+def test_shared_solvent_canonicalization_preserves_other_unit_identity(shared_solvent_run, wrong):
+    root, science, owner, consumer, runtime = shared_solvent_run
+    owner_unit = units(root, science, owner, "A")[0]
+    consumer_unit = deepcopy(units(root, science, consumer, "A")[0])
+    dependencies = artifacts.group_dependencies(root, science, owner, "A", 0)
+    begin((root, science, owner, "A", owner_unit, dependencies, runtime))
+    if wrong == "seed":
+        consumer_unit["argv"] = [arg + "0" if arg.startswith("i:integrator.randomseed:") else arg
+                                 for arg in consumer_unit["argv"]]
+    elif wrong == "ilam":
+        consumer_unit["ilam"] = consumer_unit["ilam"][1:]
+    else:
+        consumer_unit[wrong] += 1
+    with pytest.raises(WorkflowError, match="initialization identity mismatch"):
+        initialization.state(root, science, consumer, "A", consumer_unit, dependencies, runtime)
+
+
+def test_shared_solvent_consumer_status_and_probe_accept_pending_owner_intent(shared_solvent_run):
+    root, science, owner, consumer, runtime = shared_solvent_run
+    unit = units(root, science, owner, "A")[0]
+    dependencies = artifacts.group_dependencies(root, science, owner, "A", 0)
+    group = (root, science, owner, "A", unit, dependencies, runtime)
+    begin(group)
+    nc = storage(group)
+    nc.parent.mkdir(parents=True)
+    nc.write_bytes(b"interrupted owner initialization; not readable NetCDF")
+    started = initialization.locations(*group[:5])[1]
+    before = (sha256(started), sha256(nc))
+    status = {v["calculation"]: v for v in orchestration.status(root)["calculations"]}
+    assert status[consumer["key"]]["groups"]["A"]["owner"] == owner["key"]
+    assert status[consumer["key"]]["groups"]["A"]["units"][0]["state"] == "incomplete"
+    worker.probe(root, science, {"_attempt_id": "consumer-probe"}, root / "probe.json")
+    assert read(root / "probe.json")[consumer["key"]]["A"] == [False, False]
+    assert (sha256(started), sha256(nc)) == before
+    assert not (started.parent / unit["stem"]).exists()  # Probe must not quarantine.
+
+
+def test_shared_solvent_consumer_status_probe_and_finalize_accept_owner_initialization(
+        shared_solvent_run, monkeypatch):
+    root, science, owner, consumer, runtime = shared_solvent_run
+    for calc, legs in ((owner, "AB"), (consumer, "B")):
+        for leg in legs:
+            for unit in units(root, science, calc, leg):
+                group = (root, science, calc, leg, unit,
+                         artifacts.group_dependencies(root, science, calc, leg, unit["index"]), runtime)
+                ready_files(group)
+    owner_unit = units(root, science, owner, "A")[0]
+    consumer_unit = units(root, science, consumer, "A")[0]
+    assert owner_unit != consumer_unit
+    started = initialization.locations(root, science, owner, "A", owner_unit)[1]
+    assert read(started)["unit"] == owner_unit
+    started_hash = sha256(started)
+    import felis_workflows.validation as validation
+
+    def completed(_root, _science, calc, leg, unit, factory=None):
+        reporter = reporter_for((_root, _science, calc, leg, unit),
+                                last=unit["iterations"], checkpoint=unit["iterations"])
+        return iteration_status(_root, _science, calc, leg, unit, reporter)
+
+    monkeypatch.setattr(validation, "iteration_status", completed)
+    orchestration.status(root)  # Ready owner intent without a terminal group record.
+    worker.probe(root, science, {"_attempt_id": "consumer-probe"}, root / "probe.json")
+    probe = read(root / "probe.json")[consumer["key"]]
+    assert probe["A"] == [True, True] and probe["B"] == [True]
+    status = {v["calculation"]: v for v in orchestration.status(root)["calculations"]}
+    assert status[consumer["key"]]["state"] == "ready_for_finalization"
+    dependencies = artifacts.final_dependencies(root, science, consumer)
+    assert dependencies == {
+        f"{producer['key']}:{leg}:{unit['index']}": sha256(artifacts.paths(root, producer, leg, unit))
+        for producer, leg in ((owner, "A"), (consumer, "B"))
+        for unit in units(root, science, producer, leg)
+    }
+    monkeypatch.setattr(validation, "partner_occupancy", lambda *a: {"passed": True})
+    mbar_sources = {}
+
+    def mbar(*, stem, nc_list, outdir, **kwargs):
+        producer = owner if stem == "A" else consumer
+        assert nc_list == [str(workdir(root, producer) / "trj" / f"{u['stem']}.nc")
+                           for u in units(root, science, producer, stem)]
+        mbar_sources[stem] = nc_list
+        (Path(outdir) / f"{stem}_fe_table.tsv").write_text("data\n")
+
+    callbacks = {
+        "main_fe_mbar": ("calc_mbar", mbar),
+        "main_fe_restraints": ("calc_restraints", lambda *, outdir, **kw:
+                              (Path(outdir) / "R_fe_table.tsv").write_text("data\n")),
+        "main_fe_summarize": ("summarize_fe", lambda *, workdir, **kw:
+                             (Path(workdir) / "sys_abfe.tsv").write_text("ligand\tdG(kcal/mol)\nL\t-1.0\n")),
+    }
+    for name, (function, callback) in callbacks.items():
+        module = ModuleType("felis.protocols.abfe." + name)
+        setattr(module, function, callback)
+        monkeypatch.setitem(sys.modules, module.__name__, module)
+    worker.finalize(root, science, consumer, {"_attempt_id": "consumer-finalize"})
+    assert set(mbar_sources) == {"A", "B"}
+    assert artifacts.validate_final(root, science, consumer)["dependencies"] == dependencies
+    worker.probe(root, science, {"_attempt_id": "after-finalize"}, root / "probe.json")
+    assert read(root / "probe.json")[consumer["key"]]["finalize"] is True
+    status = {v["calculation"]: v for v in orchestration.status(root)["calculations"]}
+    assert status[consumer["key"]]["state"] == "finalized"
+    assert sha256(started) == started_hash  # Consumer reads must never rewrite owner intent.
+
+
+@pytest.mark.parametrize("wrong", ("group", "seed", "runtime"))
+@pytest.mark.parametrize("operation", ("status", "probe", "dependencies", "finalize"))
+def test_shared_solvent_consumers_reject_wrong_owner_identity(shared_solvent_run, wrong, operation):
+    root, science, owner, consumer, runtime = shared_solvent_run
+    unit = units(root, science, owner, "A")[0]
+    group = (root, science, owner, "A", unit,
+             artifacts.group_dependencies(root, science, owner, "A", 0), runtime)
+    ready_files(group)
+    started = initialization.locations(*group[:5])[1]
+    record = read(started)
+    if wrong == "group":
+        record["task"] = f"group:{owner['key']}:A:1"
+    elif wrong == "seed":
+        record["unit"]["argv"] = [arg + "0" if arg.startswith("i:integrator.randomseed:") else arg
+                                    for arg in record["unit"]["argv"]]
+    else:
+        record["runtime_compatibility"]["versions"]["openmm"] = "different"
+    write(started, record)
+    before = (sha256(started), sha256(storage(group)))
+    actions = {
+        "status": lambda: orchestration.status(root),
+        "probe": lambda: worker.probe(root, science, {}, root / "probe.json"),
+        "dependencies": lambda: artifacts.final_dependencies(root, science, consumer),
+        "finalize": lambda: worker.finalize(root, science, consumer, {}),
+    }
+    with pytest.raises(WorkflowError, match="initialization identity mismatch"):
+        actions[operation]()
+    assert (sha256(started), sha256(storage(group))) == before
+    assert not artifacts.paths(root, consumer, "final").exists()
 
 
 def test_easley_submit_and_resume_render_current_policy(group, site, monkeypatch):

@@ -10,7 +10,7 @@ import uuid
 
 from .artifacts import compatibility, write_once
 from .common import WorkflowError, digest, read, sha256
-from .planning import calculation, workdir
+from .planning import calculation, units, workdir
 
 
 def locations(root, science, calc, leg, unit):
@@ -21,6 +21,13 @@ def locations(root, science, calc, leg, unit):
 
 
 def identity(root, science, owner, leg, unit, dependencies, runtime):
+    if leg == "A":
+        # Shared solvent runs use the owner's SDF, not the consumer's local
+        # copy. Keep every other unit/argv field (including the seed) strict.
+        owner_unit = units(root, science, owner, leg)[unit["index"]]
+        monomer = next(arg for arg in owner_unit["argv"] if arg.startswith("s:filename.monomer:"))
+        unit = {**unit, "argv": [monomer if arg.startswith("s:filename.monomer:") else arg
+                                for arg in unit["argv"]]}
     return {"schema_version": 1, "root": str(Path(root).resolve()),
             "science_id": digest(science), "calculation": owner["key"],
             "task": f"group:{owner['key']}:{leg}:{unit['index']}",
